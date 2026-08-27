@@ -1,0 +1,34 @@
+ppo_liftcube_policy_node:
+  ros__parameters:
+    model_path: ""
+    joint_states_topic: /joint_states
+    object_pose_topic: /object_pose
+    target_pose_topic: ""
+    base_frame: base
+    robot_name: right
+    command_topic: /policy_joint_command
+    control_action: /fr3_policy_control
+
+    policy_rate_hz: 20.0
+    joint_state_timeout_s: 0.15
+    object_pose_timeout_s: 0.20
+    command_timeout_s: 0.15
+    max_duration_s: 8.0
+
+    max_target_step_rad: 0.15
+    joint_limit_margin_rad: 0.02
+    ready_tolerance_rad: 0.20
+    control_gripper: true
+    gripper_hysteresis: 0.10
+
+    # Safe defaults: inference runs, but no command is published.
+    shadow_mode: true
+    auto_start: false
+
+    target_position: [0.45, -0.30, 0.50]
+    object_start_min: [0.30, -0.45, 0.32]
+    object_start_max: [0.60, -0.05, 0.48]
+    object_workspace_min: [0.20, -0.60, 0.25]
+    object_workspace_max: [0.70, 0.10, 0.80]
+    target_min: [0.35, -0.45, 0.45]
+    target_max: [0.55, -0.15, 0.60]

@@ -89,6 +89,7 @@ add_library(${PROJECT_NAME} SHARED
     src/servers/idle_control.cpp
 
     src/servers/fr3/gravity_compensation_action_server.cpp
+    src/servers/fr3/policy_control_action_server.cpp
     src/servers/fr3_husky/gravity_compensation_action_server.cpp
     src/servers/fr3/omega_haptic_action_server.cpp
     src/servers/fr3_husky/omega_haptic_action_server.cpp

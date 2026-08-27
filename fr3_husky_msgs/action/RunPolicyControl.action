@@ -1,0 +1,18 @@
+# Start a streaming joint-position policy controller.
+string robot_name
+float64 command_timeout_s
+float64 max_duration_s
+float64 max_target_step_rad
+bool control_gripper
+---
+bool success
+string message
+uint64 last_sequence
+---
+float64 command_age_s
+float64 max_joint_error
+uint64 last_sequence
+string status
+
+
+
