@@ -51,11 +51,27 @@ int PolicyControl::resolveRobotIndex(const std::string& robot_name) const
 
 bool PolicyControl::acceptGoal(const ActionT::Goal& goal)
 {
-    if (resolveRobotIndex(goal.robot_name) < 0)
+    const bool dual = goal.robot_name == "dual";
+    if (dual && (model_updater_.robot_names_.size() != 2 ||
+                 model_updater_.manipulator_dof_ != 2 * FR3_DOF))
+    {
+        RCLCPP_WARN(
+            node_->get_logger(), "[%s] robot_name 'dual' requires exactly two FR3 arms",
+            name_.c_str());
+        return false;
+    }
+    if (!dual && resolveRobotIndex(goal.robot_name) < 0)
     {
         RCLCPP_WARN(
             node_->get_logger(), "[%s] Unknown robot_name '%s'",
             name_.c_str(), goal.robot_name.c_str());
+        return false;
+    }
+    if (dual && goal.control_gripper)
+    {
+        RCLCPP_WARN(
+            node_->get_logger(), "[%s] dual policy control does not support grippers",
+            name_.c_str());
         return false;
     }
     if (goal.command_timeout_s <= 0.0 || goal.command_timeout_s > 1.0)
@@ -79,7 +95,9 @@ bool PolicyControl::acceptGoal(const ActionT::Goal& goal)
 void PolicyControl::onGoalAccepted(const ActionT::Goal& goal)
 {
     controlled_robot_ = goal.robot_name;
-    controlled_robot_index_ = resolveRobotIndex(goal.robot_name);
+    controlled_dual_ = goal.robot_name == "dual";
+    controlled_robot_index_ = controlled_dual_ ? 0 : resolveRobotIndex(goal.robot_name);
+    controlled_dof_ = controlled_dual_ ? 2 * FR3_DOF : FR3_DOF;
     command_timeout_s_ = goal.command_timeout_s;
     max_duration_s_ = goal.max_duration_s;
     max_target_step_rad_ = goal.max_target_step_rad;
@@ -109,13 +127,21 @@ void PolicyControl::commandCallback(
     const fr3_husky_msgs::msg::PolicyJointCommand::SharedPtr msg)
 {
     CommandData command;
-    command.robot_index = resolveRobotIndex(msg->robot_name);
+    command.dual = msg->robot_name == "dual";
+    command.robot_index = command.dual ? 0 : resolveRobotIndex(msg->robot_name);
     command.sequence = msg->sequence;
     command.gripper_action = msg->gripper_action;
     command.received_time_s = node_->now().seconds();
-    command.valid = command.robot_index >= 0 && std::isfinite(command.gripper_action);
+    command.target_count = msg->target_positions.size();
 
-    for (size_t i = 0; i < FR3_DOF; ++i)
+    const size_t expected_count = command.dual ? 2 * FR3_DOF : FR3_DOF;
+    command.valid = command.robot_index >= 0 &&
+                    command.target_count == expected_count &&
+                    command.target_count <= command.target_positions.size() &&
+                    std::isfinite(command.gripper_action);
+
+    for (size_t i = 0;
+         i < std::min(command.target_count, command.target_positions.size()); ++i)
     {
         command.target_positions[i] = msg->target_positions[i];
         command.valid = command.valid && std::isfinite(command.target_positions[i]);
@@ -127,21 +153,24 @@ bool PolicyControl::validateTarget(const CommandData& command, std::string& erro
 {
     if (!command.valid)
     {
-        error = "invalid or non-finite policy command";
+        error = "invalid policy command dimension or non-finite value";
         return false;
     }
-    if (command.robot_index != controlled_robot_index_)
+    if (command.robot_index != controlled_robot_index_ ||
+        command.dual != controlled_dual_ ||
+        command.target_count != controlled_dof_)
     {
-        error = "policy command robot_name does not match active goal";
+        error = "policy command dimension/robot_name does not match active goal";
         return false;
     }
 
     const Eigen::Index offset = static_cast<Eigen::Index>(controlled_robot_index_ * FR3_DOF);
-    for (size_t i = 0; i < FR3_DOF; ++i)
+    for (size_t i = 0; i < controlled_dof_; ++i)
     {
         const double target = command.target_positions[i];
-        if (target < kLowerLimits[i] + kJointLimitMargin ||
-            target > kUpperLimits[i] - kJointLimitMargin)
+        const size_t joint_index = i % FR3_DOF;
+        if (target < kLowerLimits[joint_index] + kJointLimitMargin ||
+            target > kUpperLimits[joint_index] - kJointLimitMargin)
         {
             error = "joint" + std::to_string(i + 1) + " target violates position limit margin";
             return false;
@@ -207,7 +236,7 @@ PolicyControl::ComputeResult PolicyControl::compute(
 
         const Eigen::Index offset =
             static_cast<Eigen::Index>(controlled_robot_index_ * FR3_DOF);
-        for (size_t i = 0; i < FR3_DOF; ++i)
+        for (size_t i = 0; i < controlled_dof_; ++i)
         {
             q_desired_(offset + static_cast<Eigen::Index>(i)) =
                 command->target_positions[i];
@@ -216,7 +245,7 @@ PolicyControl::ComputeResult PolicyControl::compute(
         last_command_time_s_ = command->received_time_s;
         has_command_ = true;
 
-        if (control_gripper_)
+        if (control_gripper_ && !controlled_dual_)
         {
             const int gripper_state = command->gripper_action < 0.0 ? 1 : 0;
             if (gripper_state != last_gripper_state_)
@@ -260,7 +289,7 @@ PolicyControl::ComputeResult PolicyControl::compute(
     double max_joint_error = 0.0;
     const Eigen::Index offset =
         static_cast<Eigen::Index>(controlled_robot_index_ * FR3_DOF);
-    for (size_t i = 0; i < FR3_DOF; ++i)
+    for (size_t i = 0; i < controlled_dof_; ++i)
     {
         max_joint_error = std::max(
             max_joint_error,

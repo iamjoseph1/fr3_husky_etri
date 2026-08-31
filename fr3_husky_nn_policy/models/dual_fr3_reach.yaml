@@ -1,0 +1,25 @@
+name: dual_fr3_reach
+source_checkpoint: model_4999.pt
+source_sha256: 0e57514b34712119b72e78b98eaf515d9b5c64140261d0eb91bfa0df80883b8e
+source_iteration: 4999
+runtime: numpy
+activation: elu
+network_dims: [58, 256, 128, 64, 14]
+policy_rate_hz: 20.0
+controlled_robot: dual
+joint_order: [left_fr3_joint1, left_fr3_joint2, left_fr3_joint3, left_fr3_joint4, left_fr3_joint5, left_fr3_joint6, left_fr3_joint7, right_fr3_joint1, right_fr3_joint2, right_fr3_joint3, right_fr3_joint4, right_fr3_joint5, right_fr3_joint6, right_fr3_joint7]
+action_scale: 0.1
+target_frame: base
+target_training_range:
+  min: [0.40, -0.10, 0.10]
+  max: [0.60, 0.10, 0.35]
+quaternion_order: wxyz
+observation:
+  - {name: dual_joint_position_relative, size: 14}
+  - {name: dual_joint_velocity, size: 14}
+  - {name: reach_center_position_in_base, size: 3}
+  - {name: target_position_in_base, size: 3}
+  - {name: target_quaternion_wxyz, size: 4, fixed: [1.0, 0.0, 0.0, 0.0]}
+  - {name: previous_raw_action, size: 14}
+  - {name: zero_plate_forces, size: 2}
+  - {name: zero_object_orientation, size: 4}

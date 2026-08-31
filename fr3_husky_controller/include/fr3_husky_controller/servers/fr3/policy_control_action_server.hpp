@@ -35,11 +35,13 @@ public:
 private:
     struct CommandData
     {
-        std::array<double, FR3_DOF> target_positions{};
+        std::array<double, 2 * FR3_DOF> target_positions{};
+        size_t target_count{0};
         double gripper_action{0.0};
         double received_time_s{-1.0};
         uint64_t sequence{0};
         int robot_index{-1};
+        bool dual{false};
         bool valid{false};
     };
 
@@ -61,6 +63,8 @@ private:
 
     std::string controlled_robot_;
     int controlled_robot_index_{-1};
+    size_t controlled_dof_{FR3_DOF};
+    bool controlled_dual_{false};
     double command_timeout_s_{0.15};
     double max_duration_s_{8.0};
     double max_target_step_rad_{0.15};

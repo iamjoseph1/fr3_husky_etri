@@ -15,10 +15,69 @@ RIGHT_JOINT_NAMES = (
     "right_fr3_finger_joint2",
 )
 
+DUAL_ARM_JOINT_NAMES = tuple(
+    f"{side}_fr3_joint{index}"
+    for side in ("left", "right")
+    for index in range(1, 8)
+)
+
+
 DEFAULT_RIGHT_JOINT_POSITION = np.asarray(
     [0.5236, -0.7854, 0.0, -2.3562, 0.0, 1.5708, 0.7854, 0.04, 0.04],
     dtype=np.float32,
 )
+
+
+DEFAULT_DUAL_ARM_JOINT_POSITION = np.asarray(
+    [
+        -0.5236, -0.7854, 0.0, -2.3562, 0.0, 1.5708, 0.7854,
+        0.5236, -0.7854, 0.0, -2.3562, 0.0, 1.5708, 0.7854,
+    ],
+    dtype=np.float32,
+)
+
+
+def build_reach_observation(
+    joint_position,
+    joint_velocity,
+    target_position,
+    previous_action,
+) -> np.ndarray:
+    """Build the exact 58-D actor input used by dual_fr3_reach."""
+
+    joint_position = np.asarray(joint_position, dtype=np.float32)
+    joint_velocity = np.asarray(joint_velocity, dtype=np.float32)
+    target_position = np.asarray(target_position, dtype=np.float32)
+    previous_action = np.asarray(previous_action, dtype=np.float32)
+    expected = {
+        "joint_position": (joint_position, (14,)),
+        "joint_velocity": (joint_velocity, (14,)),
+        "target_position": (target_position, (3,)),
+        "previous_action": (previous_action, (14,)),
+    }
+    for name, (value, shape) in expected.items():
+        if value.shape != shape:
+            raise ValueError(f"{name} must have shape {shape}, got {value.shape}")
+        if not np.all(np.isfinite(value)):
+            raise ValueError(f"{name} contains NaN or Inf")
+
+    # UniformPoseCommand uses (w, x, y, z); reach was trained with zero RPY.
+    target_quaternion_wxyz = np.asarray([1.0, 0.0, 0.0, 0.0], dtype=np.float32)
+    observation = np.concatenate(
+        (
+            joint_position - DEFAULT_DUAL_ARM_JOINT_POSITION,
+            joint_velocity,
+            target_position,
+            target_position,
+            target_quaternion_wxyz,
+            previous_action,
+            np.zeros(2, dtype=np.float32),
+            np.zeros(4, dtype=np.float32),
+        )
+    )
+    if observation.shape != (58,):
+        raise RuntimeError(f"Internal observation layout error: {observation.shape}")
+    return observation
 
 
 def build_liftcube_observation(

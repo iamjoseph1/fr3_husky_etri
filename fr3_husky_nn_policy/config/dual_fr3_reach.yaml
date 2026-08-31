@@ -1,0 +1,27 @@
+ppo_reach_policy_node:
+  ros__parameters:
+    model_path: ""
+    joint_states_topic: /joint_states
+    target_pose_topic: /reach_target_pose
+    base_frame: base
+    command_topic: /policy_joint_command
+    control_action: /fr3_policy_control
+
+    policy_rate_hz: 20.0
+    joint_state_timeout_s: 0.15
+    command_timeout_s: 0.15
+    # 0 means keep following terminal target updates until explicitly stopped.
+    max_duration_s: 0.0
+
+    max_target_step_rad: 0.15
+    joint_limit_margin_rad: 0.02
+    ready_tolerance_rad: 0.20
+
+    # Safe defaults: inference runs, but no command is published.
+    shadow_mode: true
+    auto_start: false
+
+    # All positions are relative to the robot base frame, as in training.
+    target_position: [0.50, 0.00, 0.20]
+    target_min: [0.40, -0.10, 0.10]
+    target_max: [0.60, 0.10, 0.35]
