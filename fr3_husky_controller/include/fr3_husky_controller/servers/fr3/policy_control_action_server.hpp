@@ -55,6 +55,7 @@ private:
     void commandCallback(const fr3_husky_msgs::msg::PolicyJointCommand::SharedPtr msg);
     int resolveRobotIndex(const std::string& robot_name) const;
     bool validateTarget(const CommandData& command, std::string& error) const;
+    void updateRateLimitedTarget(double period_s);
     void writeDesiredCommand(const Eigen::VectorXd& q_desired, const Eigen::VectorXd& qdot_desired);
 
     FR3ModelUpdater& fr3_model_updater_;
@@ -67,7 +68,10 @@ private:
     bool controlled_dual_{false};
     double command_timeout_s_{0.15};
     double max_duration_s_{8.0};
-    double max_target_step_rad_{0.15};
+    double max_policy_target_delta_rad_{1.0};
+    double max_actuator_step_rad_{0.001};
+    double joint_velocity_scale_{0.10};
+    double joint_acceleration_scale_{0.20};
     bool control_gripper_{true};
 
     double activation_time_s_{0.0};
@@ -76,7 +80,9 @@ private:
     bool has_command_{false};
     int last_gripper_state_{-1};
     Eigen::VectorXd q_hold_;
+    Eigen::VectorXd q_target_;
     Eigen::VectorXd q_desired_;
+    Eigen::VectorXd qdot_desired_;
 
     std::string result_message_{"not started"};
 
@@ -84,7 +90,16 @@ private:
         -2.9007, -1.8361, -2.9007, -3.0770, -2.8763, 0.4398, -3.0508};
     static constexpr std::array<double, FR3_DOF> kUpperLimits{
         2.9007, 1.8361, 2.9007, -0.1169, 2.8763, 4.6216, 3.0508};
+    // franka_description/robots/fr3/joint_limits.yaml
+    static constexpr std::array<double, FR3_DOF> kMaxJointVelocities{
+        2.62, 2.62, 2.62, 2.62, 5.26, 4.18, 5.26};
+    // fr3_husky_moveit_config/config/dual/dual_fr3_joint_limits.yaml
+    static constexpr std::array<double, FR3_DOF> kMaxJointAccelerations{
+        3.75, 1.875, 2.5, 3.125, 3.75, 5.0, 5.0};
     static constexpr double kJointLimitMargin = 0.02;
+    static constexpr double kPositionTolerance = 1.0e-6;
+    static constexpr double kNominalControlPeriodS = 0.001;
+    static constexpr double kMaxLimiterPeriodS = kNominalControlPeriodS;
 };
 
 }  // namespace fr3_husky_controller::servers::fr3

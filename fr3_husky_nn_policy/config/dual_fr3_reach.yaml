@@ -13,7 +13,12 @@ ppo_reach_policy_node:
     # 0 means keep following terminal target updates until explicitly stopped.
     max_duration_s: 0.0
 
-    max_target_step_rad: 0.15
+    # Policy output is still applied as current_joint_position + 0.1 * raw_action.
+    max_policy_target_delta_rad: 1.0
+    # Independent 1 kHz actuator-side limits.
+    max_actuator_step_rad: 0.001
+    joint_velocity_scale: 0.10
+    joint_acceleration_scale: 0.20
     joint_limit_margin_rad: 0.02
     ready_tolerance_rad: 0.20
 

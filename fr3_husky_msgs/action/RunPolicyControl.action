@@ -2,7 +2,13 @@
 string robot_name
 float64 command_timeout_s
 float64 max_duration_s
-float64 max_target_step_rad
+# Reject a policy-requested target farther than this from the measured joint position.
+float64 max_policy_target_delta_rad
+# Hard upper bound on one 1 kHz actuator command increment.
+float64 max_actuator_step_rad
+# Fractions of the FR3 per-joint velocity and acceleration limits.
+float64 joint_velocity_scale
+float64 joint_acceleration_scale
 bool control_gripper
 ---
 bool success
@@ -13,6 +19,4 @@ float64 command_age_s
 float64 max_joint_error
 uint64 last_sequence
 string status
-
-
 

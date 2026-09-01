@@ -26,6 +26,7 @@
   <depend>rclcpp</depend>
   <depend>rclcpp_action</depend>
   <depend>rclcpp_lifecycle</depend>
+  <depend>pinocchio</depend>
   <depend>urdf</depend>
   <depend>realtime_tools</depend>
   <depend>tf2</depend>

@@ -36,6 +36,7 @@ set(THIS_PACKAGE_INCLUDE_DEPENDS
     geometry_msgs
     sensor_msgs
     urdf
+    pinocchio
     dyros_robot_controller
     fr3_husky_msgs
     franka_msgs
@@ -55,6 +56,19 @@ find_package(ament_cmake REQUIRED)
 foreach(Dependency IN ITEMS ${THIS_PACKAGE_INCLUDE_DEPENDS})
     find_package(${Dependency} REQUIRED)
 endforeach()
+
+# dyros_robot_controller was built against Pinocchio 3.x, whose legacy Coal
+# conversion header is not present in the ROS Humble Pinocchio 4.x package.
+# Keep the headers and shared library on the same Pinocchio ABI.
+find_path(DYROS_PINOCCHIO_INCLUDE_DIR
+    NAMES pinocchio/spatial/fcl-pinocchio-conversions.hpp
+    HINTS ${coal_INCLUDE_DIRS}
+    NO_DEFAULT_PATH
+)
+if(NOT DYROS_PINOCCHIO_INCLUDE_DIR)
+    message(FATAL_ERROR
+        "Could not find the Pinocchio 3.x headers required by dyros_robot_controller")
+endif()
 
 
 
@@ -111,9 +125,19 @@ endif()
 
 target_compile_features(${PROJECT_NAME} PUBLIC cxx_std_17)
 
+# Pinocchio's default joint variant has more than Boost 1.74's 20 MPL list
+# entries. Pinocchio raises the list limit to 30; force MPL to regenerate the
+# matching templates instead of loading its preprocessed 20-entry headers.
+target_compile_definitions(${PROJECT_NAME} PUBLIC
+    BOOST_MPL_CFG_NO_PREPROCESSED_HEADERS
+)
+
 target_include_directories(${PROJECT_NAME} PUBLIC
                            $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
                            $<INSTALL_INTERFACE:include>
+)
+target_include_directories(${PROJECT_NAME} BEFORE PRIVATE
+                           ${DYROS_PINOCCHIO_INCLUDE_DIR}
 )
 
 target_link_libraries(${PROJECT_NAME} PUBLIC
@@ -124,6 +148,7 @@ target_link_libraries(${PROJECT_NAME} PUBLIC
                       rclcpp_action::rclcpp_action
                       rclcpp_lifecycle::rclcpp_lifecycle
                       urdf::urdf
+                      pinocchio::pinocchio
                       dyros_robot_controller::dyros_robot_controller
                       Franka::Franka
 )
@@ -144,6 +169,7 @@ ament_target_dependencies(${PROJECT_NAME} PUBLIC
     geometry_msgs
     sensor_msgs
     urdf
+    pinocchio
     dyros_robot_controller
     fr3_husky_msgs
     franka_msgs

@@ -74,19 +74,53 @@ bool PolicyControl::acceptGoal(const ActionT::Goal& goal)
             name_.c_str());
         return false;
     }
-    if (goal.command_timeout_s <= 0.0 || goal.command_timeout_s > 1.0)
+    if (!std::isfinite(goal.command_timeout_s) ||
+        goal.command_timeout_s <= 0.0 || goal.command_timeout_s > 1.0)
     {
         RCLCPP_WARN(node_->get_logger(), "[%s] command_timeout_s must be in (0, 1]", name_.c_str());
         return false;
     }
-    if (goal.max_duration_s < 0.0 || goal.max_duration_s > 300.0)
+    if (!std::isfinite(goal.max_duration_s) ||
+        goal.max_duration_s < 0.0 || goal.max_duration_s > 300.0)
     {
         RCLCPP_WARN(node_->get_logger(), "[%s] max_duration_s must be in [0, 300]", name_.c_str());
         return false;
     }
-    if (goal.max_target_step_rad <= 0.0 || goal.max_target_step_rad > 1.0)
+    if (!std::isfinite(goal.max_policy_target_delta_rad) ||
+        goal.max_policy_target_delta_rad <= 0.0 ||
+        goal.max_policy_target_delta_rad > 1.0)
     {
-        RCLCPP_WARN(node_->get_logger(), "[%s] max_target_step_rad must be in (0, 1]", name_.c_str());
+        RCLCPP_WARN(
+            node_->get_logger(),
+            "[%s] max_policy_target_delta_rad must be in (0, 1]",
+            name_.c_str());
+        return false;
+    }
+    if (!std::isfinite(goal.max_actuator_step_rad) ||
+        goal.max_actuator_step_rad <= 0.0 || goal.max_actuator_step_rad > 0.01)
+    {
+        RCLCPP_WARN(
+            node_->get_logger(),
+            "[%s] max_actuator_step_rad must be in (0, 0.01]",
+            name_.c_str());
+        return false;
+    }
+    if (!std::isfinite(goal.joint_velocity_scale) ||
+        goal.joint_velocity_scale <= 0.0 || goal.joint_velocity_scale > 1.0)
+    {
+        RCLCPP_WARN(
+            node_->get_logger(),
+            "[%s] joint_velocity_scale must be in (0, 1]",
+            name_.c_str());
+        return false;
+    }
+    if (!std::isfinite(goal.joint_acceleration_scale) ||
+        goal.joint_acceleration_scale <= 0.0 || goal.joint_acceleration_scale > 1.0)
+    {
+        RCLCPP_WARN(
+            node_->get_logger(),
+            "[%s] joint_acceleration_scale must be in (0, 1]",
+            name_.c_str());
         return false;
     }
     return true;
@@ -100,7 +134,10 @@ void PolicyControl::onGoalAccepted(const ActionT::Goal& goal)
     controlled_dof_ = controlled_dual_ ? 2 * FR3_DOF : FR3_DOF;
     command_timeout_s_ = goal.command_timeout_s;
     max_duration_s_ = goal.max_duration_s;
-    max_target_step_rad_ = goal.max_target_step_rad;
+    max_policy_target_delta_rad_ = goal.max_policy_target_delta_rad;
+    max_actuator_step_rad_ = goal.max_actuator_step_rad;
+    joint_velocity_scale_ = goal.joint_velocity_scale;
+    joint_acceleration_scale_ = goal.joint_acceleration_scale;
     control_gripper_ = goal.control_gripper;
 }
 
@@ -108,7 +145,9 @@ void PolicyControl::onStart()
 {
     fr3_model_updater_.setInitFromCurrent();
     q_hold_ = fr3_model_updater_.q_total_;
+    q_target_ = q_hold_;
     q_desired_ = q_hold_;
+    qdot_desired_ = Eigen::VectorXd::Zero(model_updater_.manipulator_dof_);
     activation_time_s_ = node_->now().seconds();
     last_command_time_s_ = activation_time_s_;
     last_sequence_ = 0;
@@ -118,9 +157,12 @@ void PolicyControl::onStart()
 
     RCLCPP_INFO(
         node_->get_logger(),
-        "[%s] started robot=%s timeout=%.3fs max_duration=%.3fs max_step=%.3frad gripper=%s",
+        "[%s] started robot=%s timeout=%.3fs max_duration=%.3fs "
+        "policy_delta=%.3frad actuator_step=%.4frad velocity_scale=%.2f "
+        "acceleration_scale=%.2f gripper=%s",
         name_.c_str(), controlled_robot_.c_str(), command_timeout_s_, max_duration_s_,
-        max_target_step_rad_, control_gripper_ ? "true" : "false");
+        max_policy_target_delta_rad_, max_actuator_step_rad_, joint_velocity_scale_,
+        joint_acceleration_scale_, control_gripper_ ? "true" : "false");
 }
 
 void PolicyControl::commandCallback(
@@ -177,13 +219,73 @@ bool PolicyControl::validateTarget(const CommandData& command, std::string& erro
         }
         const double step = std::abs(
             target - fr3_model_updater_.q_total_(offset + static_cast<Eigen::Index>(i)));
-        if (step > max_target_step_rad_)
+        if (step > max_policy_target_delta_rad_)
         {
-            error = "joint" + std::to_string(i + 1) + " target step exceeds max_target_step_rad";
+            error = "joint" + std::to_string(i + 1) +
+                    " policy target delta exceeds max_policy_target_delta_rad";
             return false;
         }
     }
     return true;
+}
+
+void PolicyControl::updateRateLimitedTarget(double period_s)
+{
+    if (!std::isfinite(period_s) || period_s <= 0.0)
+    {
+        period_s = kNominalControlPeriodS;
+    }
+    period_s = std::min(period_s, kMaxLimiterPeriodS);
+
+    const Eigen::Index offset =
+        static_cast<Eigen::Index>(controlled_robot_index_ * FR3_DOF);
+    for (size_t i = 0; i < controlled_dof_; ++i)
+    {
+        const Eigen::Index index = offset + static_cast<Eigen::Index>(i);
+        const size_t joint_index = i % FR3_DOF;
+        const double max_velocity = std::min(
+            kMaxJointVelocities[joint_index] * joint_velocity_scale_,
+            max_actuator_step_rad_ / period_s);
+        const double max_acceleration =
+            kMaxJointAccelerations[joint_index] * joint_acceleration_scale_;
+        const double error = q_target_(index) - q_desired_(index);
+        const double current_velocity = qdot_desired_(index);
+
+        if (std::abs(error) <= kPositionTolerance &&
+            std::abs(current_velocity) <= max_acceleration * period_s)
+        {
+            q_desired_(index) = q_target_(index);
+            qdot_desired_(index) = 0.0;
+            continue;
+        }
+
+        const double braking_velocity =
+            std::sqrt(2.0 * max_acceleration * std::abs(error));
+        const double target_velocity = std::copysign(
+            std::min(max_velocity, braking_velocity), error);
+        const double velocity_delta = std::clamp(
+            target_velocity - current_velocity,
+            -max_acceleration * period_s,
+            max_acceleration * period_s);
+        const double next_velocity = std::clamp(
+            current_velocity + velocity_delta, -max_velocity, max_velocity);
+        const double max_step = std::min(
+            max_actuator_step_rad_, max_velocity * period_s);
+        const double position_step = std::clamp(
+            next_velocity * period_s, -max_step, max_step);
+
+        if (position_step * error > 0.0 &&
+            std::abs(position_step) >= std::abs(error))
+        {
+            q_desired_(index) = q_target_(index);
+            qdot_desired_(index) = 0.0;
+        }
+        else
+        {
+            q_desired_(index) += position_step;
+            qdot_desired_(index) = position_step / period_s;
+        }
+    }
 }
 
 void PolicyControl::writeDesiredCommand(
@@ -218,7 +320,7 @@ void PolicyControl::writeDesiredCommand(
 }
 
 PolicyControl::ComputeResult PolicyControl::compute(
-    const rclcpp::Time& time, const rclcpp::Duration& /*period*/)
+    const rclcpp::Time& time, const rclcpp::Duration& period)
 {
     const double now_s = time.seconds();
     const CommandData* command = command_buffer_.readFromRT();
@@ -238,7 +340,7 @@ PolicyControl::ComputeResult PolicyControl::compute(
             static_cast<Eigen::Index>(controlled_robot_index_ * FR3_DOF);
         for (size_t i = 0; i < controlled_dof_; ++i)
         {
-            q_desired_(offset + static_cast<Eigen::Index>(i)) =
+            q_target_(offset + static_cast<Eigen::Index>(i)) =
                 command->target_positions[i];
         }
         last_sequence_ = command->sequence;
@@ -282,9 +384,8 @@ PolicyControl::ComputeResult PolicyControl::compute(
         return ComputeResult::SUCCEEDED;
     }
 
-    const Eigen::VectorXd qdot_desired =
-        Eigen::VectorXd::Zero(model_updater_.manipulator_dof_);
-    writeDesiredCommand(q_desired_, qdot_desired);
+    updateRateLimitedTarget(period.seconds());
+    writeDesiredCommand(q_desired_, qdot_desired_);
 
     double max_joint_error = 0.0;
     const Eigen::Index offset =

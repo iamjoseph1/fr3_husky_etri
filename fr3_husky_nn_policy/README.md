@@ -15,6 +15,13 @@ Both policies run at 20 Hz and publish joint-position targets through the same
 policy control interface. Launch files default to shadow mode, which performs
 inference without sending commands to the robot.
 
+The arm action keeps the training-time interpretation:
+`target_joint_position = current_joint_position + 0.1 * raw_action`. The C++
+PolicyControl server treats that value as a policy target and generates the
+actual command at 1 kHz with independent velocity, acceleration, and per-cycle
+step limits. It does not reinterpret the raw action relative to the training
+ready pose.
+
 ## Build
 
 PolicyJointCommand supports either 7 single-arm targets or 14 dual-arm targets,
@@ -33,6 +40,10 @@ source install/setup.bash
 - Controller action: /fr3_policy_control
 - Command frame: base
 - NPZ loader: NumpyMLPActor with allow_pickle=False
+
+Policy target validation uses `max_policy_target_delta_rad`. Actuator command
+smoothing is configured separately with `max_actuator_step_rad`,
+`joint_velocity_scale`, and `joint_acceleration_scale`.
 
 Before enabling either policy, verify the joint names, state update rate,
 coordinate frame, initial pose, policy outputs, and configured safety limits in

@@ -22,7 +22,7 @@ def generate_launch_description():
             "use_fake_hardware": LaunchConfiguration("use_fake_hardware"),
             "load_gripper": "false",
             "launch_rviz": LaunchConfiguration("launch_rviz"),
-            "launch_move_group": "false",
+            "launch_move_group": LaunchConfiguration("launch_move_group"),
         }.items(),
     )
 
@@ -46,6 +46,7 @@ def generate_launch_description():
             DeclareLaunchArgument("use_mujoco", default_value="false"),
             DeclareLaunchArgument("use_fake_hardware", default_value="false"),
             DeclareLaunchArgument("launch_rviz", default_value="true"),
+            DeclareLaunchArgument("launch_move_group", default_value="false"),
             DeclareLaunchArgument("shadow_mode", default_value="true"),
             DeclareLaunchArgument("auto_start", default_value="false"),
             DeclareLaunchArgument(

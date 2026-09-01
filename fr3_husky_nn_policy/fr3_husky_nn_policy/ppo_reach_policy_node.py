@@ -52,7 +52,10 @@ class PPOReachPolicyNode(Node):
         self.declare_parameter("joint_state_timeout_s", 0.15)
         self.declare_parameter("command_timeout_s", 0.15)
         self.declare_parameter("max_duration_s", 0.0)
-        self.declare_parameter("max_target_step_rad", 0.15)
+        self.declare_parameter("max_policy_target_delta_rad", 1.0)
+        self.declare_parameter("max_actuator_step_rad", 0.001)
+        self.declare_parameter("joint_velocity_scale", 0.10)
+        self.declare_parameter("joint_acceleration_scale", 0.20)
         self.declare_parameter("joint_limit_margin_rad", 0.02)
         self.declare_parameter("ready_tolerance_rad", 0.20)
         self.declare_parameter("shadow_mode", True)
@@ -235,8 +238,17 @@ class PPOReachPolicyNode(Node):
             self.get_parameter("command_timeout_s").value
         )
         goal.max_duration_s = float(self.get_parameter("max_duration_s").value)
-        goal.max_target_step_rad = float(
-            self.get_parameter("max_target_step_rad").value
+        goal.max_policy_target_delta_rad = float(
+            self.get_parameter("max_policy_target_delta_rad").value
+        )
+        goal.max_actuator_step_rad = float(
+            self.get_parameter("max_actuator_step_rad").value
+        )
+        goal.joint_velocity_scale = float(
+            self.get_parameter("joint_velocity_scale").value
+        )
+        goal.joint_acceleration_scale = float(
+            self.get_parameter("joint_acceleration_scale").value
         )
         goal.control_gripper = False
 
@@ -334,19 +346,23 @@ class PPOReachPolicyNode(Node):
             return
 
         delta = 0.1 * action.astype(np.float64)
-        max_step = float(self.get_parameter("max_target_step_rad").value)
-        if np.max(np.abs(delta)) > max_step:
+        max_policy_delta = float(
+            self.get_parameter("max_policy_target_delta_rad").value
+        )
+        if np.max(np.abs(delta)) > max_policy_delta:
             if self.goal_active:
                 self._cancel_for_fault(
-                    f"Policy output exceeds max target step: "
+                    f"Policy output exceeds max target delta: "
                     f"{np.max(np.abs(delta)):.3f} rad"
                 )
             return
 
         target = self.joint_position + delta
+
         margin = float(self.get_parameter("joint_limit_margin_rad").value)
         if not np.all(
-            (target >= LOWER_LIMITS + margin) & (target <= UPPER_LIMITS - margin)
+            (target >= LOWER_LIMITS + margin)
+            & (target <= UPPER_LIMITS - margin)
         ):
             if self.goal_active:
                 self._cancel_for_fault(f"Policy target violates joint limits: {target}")
