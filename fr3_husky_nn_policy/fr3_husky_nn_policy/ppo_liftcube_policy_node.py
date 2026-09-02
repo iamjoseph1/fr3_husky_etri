@@ -297,6 +297,8 @@ class PPOLiftCubePolicyNode(Node):
         goal.joint_acceleration_scale = float(
             self.get_parameter("joint_acceleration_scale").value
         )
+        goal.isaac_relative_control = False
+        goal.relative_target_refresh_hz = 0.0
         goal.control_gripper = bool(self.get_parameter("control_gripper").value)
 
         self.goal_pending = True
@@ -432,6 +434,7 @@ class PPOLiftCubePolicyNode(Node):
         command.sequence = self.sequence
         command.robot_name = self.robot_name
         command.target_positions = target.tolist()
+        command.relative_position_offsets = False
         command.gripper_action = self._debounced_gripper_action(float(action[7]))
         self.command_publisher.publish(command)
 

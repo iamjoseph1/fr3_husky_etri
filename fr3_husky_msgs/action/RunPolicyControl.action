@@ -9,6 +9,12 @@ float64 max_actuator_step_rad
 # Fractions of the FR3 per-joint velocity and acceleration limits.
 float64 joint_velocity_scale
 float64 joint_acceleration_scale
+# Reproduce Isaac Lab RelativeJointPositionAction semantics. In this mode
+# PolicyJointCommand.target_positions contains relative joint offsets, the
+# absolute target is refreshed from measured q, and the legacy trajectory
+# rate limiter above is bypassed.
+bool isaac_relative_control
+float64 relative_target_refresh_hz
 bool control_gripper
 ---
 bool success
@@ -19,4 +25,3 @@ float64 command_age_s
 float64 max_joint_error
 uint64 last_sequence
 string status
-

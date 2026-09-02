@@ -42,6 +42,7 @@ private:
         uint64_t sequence{0};
         int robot_index{-1};
         bool dual{false};
+        bool relative_position_offsets{false};
         bool valid{false};
     };
 
@@ -56,7 +57,9 @@ private:
     int resolveRobotIndex(const std::string& robot_name) const;
     bool validateTarget(const CommandData& command, std::string& error) const;
     void updateRateLimitedTarget(double period_s);
+    bool refreshIsaacRelativeTarget(std::string& error);
     void writeDesiredCommand(const Eigen::VectorXd& q_desired, const Eigen::VectorXd& qdot_desired);
+    void writeIsaacEffortCommand();
 
     FR3ModelUpdater& fr3_model_updater_;
     rclcpp::Subscription<fr3_husky_msgs::msg::PolicyJointCommand>::SharedPtr command_sub_;
@@ -72,17 +75,21 @@ private:
     double max_actuator_step_rad_{0.001};
     double joint_velocity_scale_{0.10};
     double joint_acceleration_scale_{0.20};
+    bool isaac_relative_control_{false};
+    double relative_target_refresh_hz_{100.0};
     bool control_gripper_{true};
 
     double activation_time_s_{0.0};
     double last_command_time_s_{0.0};
     uint64_t last_sequence_{0};
     bool has_command_{false};
+    double next_relative_refresh_time_s_{0.0};
     int last_gripper_state_{-1};
     Eigen::VectorXd q_hold_;
     Eigen::VectorXd q_target_;
     Eigen::VectorXd q_desired_;
     Eigen::VectorXd qdot_desired_;
+    Eigen::VectorXd q_offset_;
 
     std::string result_message_{"not started"};
 
@@ -96,6 +103,13 @@ private:
     // fr3_husky_moveit_config/config/dual/dual_fr3_joint_limits.yaml
     static constexpr std::array<double, FR3_DOF> kMaxJointAccelerations{
         3.75, 1.875, 2.5, 3.125, 3.75, 5.0, 5.0};
+    // dual_fr3_lab DUAL_FR3_PLATE_EE_CFG implicit actuator parameters.
+    static constexpr std::array<double, FR3_DOF> kIsaacStiffness{
+        80.0, 80.0, 80.0, 80.0, 80.0, 80.0, 80.0};
+    static constexpr std::array<double, FR3_DOF> kIsaacDamping{
+        4.0, 4.0, 4.0, 4.0, 4.0, 4.0, 4.0};
+    static constexpr std::array<double, FR3_DOF> kIsaacEffortLimits{
+        87.0, 87.0, 87.0, 87.0, 12.0, 12.0, 12.0};
     static constexpr double kJointLimitMargin = 0.02;
     static constexpr double kPositionTolerance = 1.0e-6;
     static constexpr double kNominalControlPeriodS = 0.001;

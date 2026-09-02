@@ -123,6 +123,32 @@ bool PolicyControl::acceptGoal(const ActionT::Goal& goal)
             name_.c_str());
         return false;
     }
+    if (goal.isaac_relative_control)
+    {
+        if (!dual)
+        {
+            RCLCPP_WARN(
+                node_->get_logger(), "[%s] Isaac-relative control is reach-specific and requires robot_name 'dual'",
+                name_.c_str());
+            return false;
+        }
+        if (!model_updater_.HasEffortCommandInterface())
+        {
+            RCLCPP_WARN(
+                node_->get_logger(), "[%s] Isaac-relative control requires an effort command interface",
+                name_.c_str());
+            return false;
+        }
+        if (!std::isfinite(goal.relative_target_refresh_hz) ||
+            goal.relative_target_refresh_hz <= 0.0 ||
+            goal.relative_target_refresh_hz > 1000.0)
+        {
+            RCLCPP_WARN(
+                node_->get_logger(), "[%s] relative_target_refresh_hz must be in (0, 1000]",
+                name_.c_str());
+            return false;
+        }
+    }
     return true;
 }
 
@@ -138,6 +164,8 @@ void PolicyControl::onGoalAccepted(const ActionT::Goal& goal)
     max_actuator_step_rad_ = goal.max_actuator_step_rad;
     joint_velocity_scale_ = goal.joint_velocity_scale;
     joint_acceleration_scale_ = goal.joint_acceleration_scale;
+    isaac_relative_control_ = goal.isaac_relative_control;
+    relative_target_refresh_hz_ = goal.relative_target_refresh_hz;
     control_gripper_ = goal.control_gripper;
 }
 
@@ -148,7 +176,9 @@ void PolicyControl::onStart()
     q_target_ = q_hold_;
     q_desired_ = q_hold_;
     qdot_desired_ = Eigen::VectorXd::Zero(model_updater_.manipulator_dof_);
+    q_offset_ = Eigen::VectorXd::Zero(model_updater_.manipulator_dof_);
     activation_time_s_ = node_->now().seconds();
+    next_relative_refresh_time_s_ = activation_time_s_;
     last_command_time_s_ = activation_time_s_;
     last_sequence_ = 0;
     has_command_ = false;
@@ -159,10 +189,12 @@ void PolicyControl::onStart()
         node_->get_logger(),
         "[%s] started robot=%s timeout=%.3fs max_duration=%.3fs "
         "policy_delta=%.3frad actuator_step=%.4frad velocity_scale=%.2f "
-        "acceleration_scale=%.2f gripper=%s",
+        "acceleration_scale=%.2f mode=%s relative_refresh=%.1fHz gripper=%s",
         name_.c_str(), controlled_robot_.c_str(), command_timeout_s_, max_duration_s_,
         max_policy_target_delta_rad_, max_actuator_step_rad_, joint_velocity_scale_,
-        joint_acceleration_scale_, control_gripper_ ? "true" : "false");
+        joint_acceleration_scale_, isaac_relative_control_ ? "isaac-relative" : "rate-limited-absolute",
+        isaac_relative_control_ ? relative_target_refresh_hz_ : 0.0,
+        control_gripper_ ? "true" : "false");
 }
 
 void PolicyControl::commandCallback(
@@ -173,6 +205,7 @@ void PolicyControl::commandCallback(
     command.robot_index = command.dual ? 0 : resolveRobotIndex(msg->robot_name);
     command.sequence = msg->sequence;
     command.gripper_action = msg->gripper_action;
+    command.relative_position_offsets = msg->relative_position_offsets;
     command.received_time_s = node_->now().seconds();
     command.target_count = msg->target_positions.size();
 
@@ -205,11 +238,21 @@ bool PolicyControl::validateTarget(const CommandData& command, std::string& erro
         error = "policy command dimension/robot_name does not match active goal";
         return false;
     }
+    if (command.relative_position_offsets != isaac_relative_control_)
+    {
+        error = "policy command relative/absolute semantics do not match active goal";
+        return false;
+    }
 
     const Eigen::Index offset = static_cast<Eigen::Index>(controlled_robot_index_ * FR3_DOF);
     for (size_t i = 0; i < controlled_dof_; ++i)
     {
-        const double target = command.target_positions[i];
+        const double requested = command.target_positions[i];
+        const double measured =
+            fr3_model_updater_.q_total_(offset + static_cast<Eigen::Index>(i));
+        const double target = command.relative_position_offsets
+            ? measured + requested
+            : requested;
         const size_t joint_index = i % FR3_DOF;
         if (target < kLowerLimits[joint_index] + kJointLimitMargin ||
             target > kUpperLimits[joint_index] - kJointLimitMargin)
@@ -217,8 +260,7 @@ bool PolicyControl::validateTarget(const CommandData& command, std::string& erro
             error = "joint" + std::to_string(i + 1) + " target violates position limit margin";
             return false;
         }
-        const double step = std::abs(
-            target - fr3_model_updater_.q_total_(offset + static_cast<Eigen::Index>(i)));
+        const double step = std::abs(target - measured);
         if (step > max_policy_target_delta_rad_)
         {
             error = "joint" + std::to_string(i + 1) +
@@ -288,6 +330,54 @@ void PolicyControl::updateRateLimitedTarget(double period_s)
     }
 }
 
+bool PolicyControl::refreshIsaacRelativeTarget(std::string& error)
+{
+    const Eigen::Index offset =
+        static_cast<Eigen::Index>(controlled_robot_index_ * FR3_DOF);
+    for (size_t i = 0; i < controlled_dof_; ++i)
+    {
+        const Eigen::Index index = offset + static_cast<Eigen::Index>(i);
+        const size_t joint_index = i % FR3_DOF;
+        const double target = fr3_model_updater_.q_total_(index) + q_offset_(index);
+        if (target < kLowerLimits[joint_index] + kJointLimitMargin ||
+            target > kUpperLimits[joint_index] - kJointLimitMargin)
+        {
+            error = "joint" + std::to_string(i + 1) +
+                    " refreshed relative target violates position limit margin";
+            return false;
+        }
+        q_target_(index) = target;
+        q_desired_(index) = target;
+        // Isaac implicit position actuators use a zero velocity target.
+        qdot_desired_(index) = 0.0;
+    }
+    return true;
+}
+
+void PolicyControl::writeIsaacEffortCommand()
+{
+    fr3_model_updater_.torque_desired_total_.setZero();
+    const Eigen::Index offset =
+        static_cast<Eigen::Index>(controlled_robot_index_ * FR3_DOF);
+    for (size_t i = 0; i < controlled_dof_; ++i)
+    {
+        const Eigen::Index index = offset + static_cast<Eigen::Index>(i);
+        const size_t joint_index = i % FR3_DOF;
+        const double effort =
+            kIsaacStiffness[joint_index] *
+                (q_desired_(index) - fr3_model_updater_.q_total_(index)) +
+            kIsaacDamping[joint_index] *
+                (qdot_desired_(index) - fr3_model_updater_.qdot_total_(index));
+        fr3_model_updater_.torque_desired_total_(index) = std::clamp(
+            effort,
+            -kIsaacEffortLimits[joint_index],
+            kIsaacEffortLimits[joint_index]);
+    }
+    // The Franka hardware layer provides gravity compensation. This matches
+    // the training asset, where robot-link gravity is disabled.
+    fr3_model_updater_.writeCommand(fr3_model_updater_.torque_desired_total_);
+}
+
 void PolicyControl::writeDesiredCommand(
     const Eigen::VectorXd& q_desired, const Eigen::VectorXd& qdot_desired)
 {
@@ -340,8 +430,26 @@ PolicyControl::ComputeResult PolicyControl::compute(
             static_cast<Eigen::Index>(controlled_robot_index_ * FR3_DOF);
         for (size_t i = 0; i < controlled_dof_; ++i)
         {
-            q_target_(offset + static_cast<Eigen::Index>(i)) =
-                command->target_positions[i];
+            const Eigen::Index index = offset + static_cast<Eigen::Index>(i);
+            if (isaac_relative_control_)
+            {
+                q_offset_(index) = command->target_positions[i];
+            }
+            else
+            {
+                q_target_(index) = command->target_positions[i];
+            }
+        }
+        if (isaac_relative_control_)
+        {
+            if (!refreshIsaacRelativeTarget(error))
+            {
+                result_message_ = error;
+                RCLCPP_ERROR(node_->get_logger(), "[%s] %s", name_.c_str(), error.c_str());
+                return ComputeResult::ABORTED;
+            }
+            next_relative_refresh_time_s_ =
+                now_s + 1.0 / relative_target_refresh_hz_;
         }
         last_sequence_ = command->sequence;
         last_command_time_s_ = command->received_time_s;
@@ -384,8 +492,31 @@ PolicyControl::ComputeResult PolicyControl::compute(
         return ComputeResult::SUCCEEDED;
     }
 
-    updateRateLimitedTarget(period.seconds());
-    writeDesiredCommand(q_desired_, qdot_desired_);
+    if (isaac_relative_control_)
+    {
+        if (now_s >= next_relative_refresh_time_s_)
+        {
+            std::string error;
+            if (!refreshIsaacRelativeTarget(error))
+            {
+                result_message_ = error;
+                RCLCPP_ERROR(node_->get_logger(), "[%s] %s", name_.c_str(), error.c_str());
+                return ComputeResult::ABORTED;
+            }
+            const double refresh_period_s = 1.0 / relative_target_refresh_hz_;
+            do
+            {
+                next_relative_refresh_time_s_ += refresh_period_s;
+            }
+            while (next_relative_refresh_time_s_ <= now_s);
+        }
+        writeIsaacEffortCommand();
+    }
+    else
+    {
+        updateRateLimitedTarget(period.seconds());
+        writeDesiredCommand(q_desired_, qdot_desired_);
+    }
 
     double max_joint_error = 0.0;
     const Eigen::Index offset =

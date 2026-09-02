@@ -18,6 +18,7 @@ def generate_launch_description():
         ),
         launch_arguments={
             "robot_side": "dual",
+            "load_mobile": LaunchConfiguration("load_mobile"),
             "use_mujoco": LaunchConfiguration("use_mujoco"),
             "use_fake_hardware": LaunchConfiguration("use_fake_hardware"),
             "load_gripper": "false",
@@ -43,6 +44,7 @@ def generate_launch_description():
 
     return LaunchDescription(
         [
+            DeclareLaunchArgument("load_mobile", default_value="true"),
             DeclareLaunchArgument("use_mujoco", default_value="false"),
             DeclareLaunchArgument("use_fake_hardware", default_value="false"),
             DeclareLaunchArgument("launch_rviz", default_value="true"),

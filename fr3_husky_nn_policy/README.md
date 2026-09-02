@@ -11,16 +11,20 @@ PyTorch and a GPU are not required at deployment time.
 | LiftCube | Right arm and gripper | 36-D observation → 8-D action | Object pose and lift target |
 | Reach | Left and right arms | 58-D observation → 14-D action | User-entered target center |
 
-Both policies run at 20 Hz and publish joint-position targets through the same
-policy control interface. Launch files default to shadow mode, which performs
-inference without sending commands to the robot.
+Both policies run at 20 Hz through the same policy control interface. Launch
+files default to shadow mode, which performs inference without sending commands
+to the robot. Their actuator-side execution modes are deliberately task-specific:
 
-The arm action keeps the training-time interpretation:
-`target_joint_position = current_joint_position + 0.1 * raw_action`. The C++
-PolicyControl server treats that value as a policy target and generates the
-actual command at 1 kHz with independent velocity, acceleration, and per-cycle
-step limits. It does not reinterpret the raw action relative to the training
-ready pose.
+| Task | Streamed arm command | Controller execution |
+| --- | --- | --- |
+| LiftCube | Absolute `q + 0.1 * action` target | Existing 1 kHz velocity/acceleration/step-limited trajectory |
+| Reach | Relative `0.1 * action` offset | Refresh `q_target = measured_q + offset` at 100 Hz, then Isaac-style effort PD |
+
+Reach uses the nominal training actuator values `Kp=80`, `Kd=4`, with effort
+limits of 87 Nm for joints 1-4 and 12 Nm for joints 5-7. This path bypasses the
+legacy trajectory limiter so that Isaac Lab's `RelativeJointPositionAction`
+substep behavior is preserved. Timeout, finite-value, joint-limit, and maximum
+policy-offset validation remain active.
 
 ## Build
 
@@ -41,9 +45,12 @@ source install/setup.bash
 - Command frame: base
 - NPZ loader: NumpyMLPActor with allow_pickle=False
 
-Policy target validation uses `max_policy_target_delta_rad`. Actuator command
-smoothing is configured separately with `max_actuator_step_rad`,
-`joint_velocity_scale`, and `joint_acceleration_scale`.
+Policy target validation uses `max_policy_target_delta_rad`. For LiftCube,
+actuator command smoothing is configured separately with
+`max_actuator_step_rad`, `joint_velocity_scale`, and
+`joint_acceleration_scale`. Reach does not use those three smoothing values;
+its relative target refresh rate is `relative_target_refresh_hz` (100 Hz by
+default).
 
 Before enabling either policy, verify the joint names, state update rate,
 coordinate frame, initial pose, policy outputs, and configured safety limits in
@@ -108,6 +115,11 @@ frame, and the policy moves both end effectors toward the corresponding points
 - Network: 58 → 256 → 128 → 64 → 14
 - Launch: dual_fr3_reach_policy.launch.py
 - Node: ppo_reach_policy_node
+
+At each policy step the node publishes the 14 relative joint offsets rather
+than an absolute target. The controller holds that offset for the 50 ms policy
+interval and recomputes the absolute target from the latest measured joint
+positions every 10 ms, matching the five 100 Hz Isaac physics substeps.
 
 ### Inputs and services
 

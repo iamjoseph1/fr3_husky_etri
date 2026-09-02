@@ -56,6 +56,7 @@ class PPOReachPolicyNode(Node):
         self.declare_parameter("max_actuator_step_rad", 0.001)
         self.declare_parameter("joint_velocity_scale", 0.10)
         self.declare_parameter("joint_acceleration_scale", 0.20)
+        self.declare_parameter("relative_target_refresh_hz", 100.0)
         self.declare_parameter("joint_limit_margin_rad", 0.02)
         self.declare_parameter("ready_tolerance_rad", 0.20)
         self.declare_parameter("shadow_mode", True)
@@ -250,6 +251,10 @@ class PPOReachPolicyNode(Node):
         goal.joint_acceleration_scale = float(
             self.get_parameter("joint_acceleration_scale").value
         )
+        goal.isaac_relative_control = True
+        goal.relative_target_refresh_hz = float(
+            self.get_parameter("relative_target_refresh_hz").value
+        )
         goal.control_gripper = False
 
         self.goal_pending = True
@@ -378,7 +383,12 @@ class PPOReachPolicyNode(Node):
         command.header.frame_id = self.base_frame
         command.sequence = self.sequence
         command.robot_name = "dual"
-        command.target_positions = target.tolist()
+        # Isaac Lab's RelativeJointPositionAction keeps the processed offset
+        # constant for one policy step and recomputes q_target = q + offset at
+        # every 100 Hz physics substep. Send the offset, not a stale absolute
+        # target, so the real-time controller can reproduce that behavior.
+        command.target_positions = delta.tolist()
+        command.relative_position_offsets = True
         command.gripper_action = 0.0
         self.command_publisher.publish(command)
 
