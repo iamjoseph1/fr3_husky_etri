@@ -347,9 +347,6 @@ bool PolicyControl::refreshIsaacRelativeTarget(std::string& error)
             return false;
         }
         q_target_(index) = target;
-        q_desired_(index) = target;
-        // Isaac implicit position actuators use a zero velocity target.
-        qdot_desired_(index) = 0.0;
     }
     return true;
 }
@@ -510,6 +507,10 @@ PolicyControl::ComputeResult PolicyControl::compute(
             }
             while (next_relative_refresh_time_s_ <= now_s);
         }
+        // Keep the measured-relative target refresh at its configured rate,
+        // but advance the PD position/velocity reference through the existing
+        // per-control-cycle velocity, acceleration, and step limiter.
+        updateRateLimitedTarget(period.seconds());
         writeIsaacEffortCommand();
     }
     else
