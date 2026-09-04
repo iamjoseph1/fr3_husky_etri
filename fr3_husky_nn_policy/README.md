@@ -18,7 +18,7 @@ to the robot. Their actuator-side execution modes are deliberately task-specific
 | Task | Streamed arm command | Controller execution |
 | --- | --- | --- |
 | LiftCube | Absolute `q + 0.1 * action` target | Existing 1 kHz velocity/acceleration/step-limited trajectory |
-| Reach | Relative `0.1 * action` offset | Refresh `q_target = measured_q + offset` at 100 Hz, then Isaac-style effort PD |
+| Reach | Relative `0.1 * action` offset | Compute `q_target = measured_q + offset` once per 20 Hz action, hold it, then Isaac-style effort PD |
 
 Reach uses the nominal training actuator values `Kp=80`, `Kd=4`, with effort
 limits of 87 Nm for joints 1-4 and 12 Nm for joints 5-7. This path bypasses the
@@ -49,7 +49,8 @@ Policy target validation uses `max_policy_target_delta_rad`. For LiftCube,
 actuator command smoothing is configured separately with
 `max_actuator_step_rad`, `joint_velocity_scale`, and
 `joint_acceleration_scale`. Reach does not use those three smoothing values;
-its relative target refresh rate is `relative_target_refresh_hz` (100 Hz by
+its legacy `relative_target_refresh_hz` parameter is retained for action API
+compatibility; targets are computed once per 20 Hz policy action by
 default).
 
 Before enabling either policy, verify the joint names, state update rate,
@@ -125,8 +126,9 @@ The node-side `action_clip=1.0` remains a numerical safety guard.
 
 At each policy step the node publishes the 14 relative joint offsets rather
 than an absolute target. The controller holds that offset for the 50 ms policy
-interval and recomputes the absolute target from the latest measured joint
-positions every 10 ms, matching the five 100 Hz Isaac physics substeps.
+interval. It recomputes the absolute target from the latest measured joint
+positions only when the next policy action arrives, then holds that target
+across the five 100 Hz Isaac physics substeps.
 
 ### Inputs and services
 
@@ -182,6 +184,26 @@ Stop both arms with:
 ~~~bash
 ros2 service call /ppo_reach_policy_node/stop_policy std_srvs/srv/Trigger {}
 ~~~
+
+### Reach trajectory log
+
+A successful `start_policy` request starts a 20 Hz trajectory log. On launch
+shutdown, the node writes the CSV data, metadata, and four PNG plots below:
+
+~~~text
+fr3_husky_nn_policy/log/dual_fr3_reach/<start time>/
+├── eef_trajectory.csv
+├── metadata.json
+├── eef_x_vs_target.png
+├── eef_y_vs_target.png
+├── eef_z_vs_target.png
+└── eef_trajectory_3d.png
+~~~
+
+The EEF coordinates use the same definition as training: each `fr3_link7`
+frame plus `[0, 0, 0.132] m` in its local frame. The plotted per-arm targets
+are the commanded center plus/minus `0.20 m` on the base-frame Y axis. Set the
+`log_root` ROS parameter to override the default output root.
 
 ## Re-exporting an actor
 

@@ -30,6 +30,7 @@ public:
     ~PolicyControl() override = default;
 
     int priority() const override { return 9; }
+    bool requiresRobotDataUpdate() const override { return !isaac_relative_control_; }
     bool allowPreemption() const override { return false; }
 
 private:
@@ -59,7 +60,7 @@ private:
     void updateRateLimitedTarget(double period_s);
     bool refreshIsaacRelativeTarget(std::string& error);
     void writeDesiredCommand(const Eigen::VectorXd& q_desired, const Eigen::VectorXd& qdot_desired);
-    void writeIsaacEffortCommand();
+    void writeIsaacEffortCommand(bool update_effort);
 
     FR3ModelUpdater& fr3_model_updater_;
     rclcpp::Subscription<fr3_husky_msgs::msg::PolicyJointCommand>::SharedPtr command_sub_;
@@ -84,12 +85,16 @@ private:
     uint64_t last_sequence_{0};
     bool has_command_{false};
     double next_relative_refresh_time_s_{0.0};
+    double next_effort_update_time_s_{0.0};
     int last_gripper_state_{-1};
     Eigen::VectorXd q_hold_;
     Eigen::VectorXd q_target_;
     Eigen::VectorXd q_desired_;
     Eigen::VectorXd qdot_desired_;
     Eigen::VectorXd q_offset_;
+    // Matches dual_fr3_lab TorqueRateLimitedPDActuator.  The state is reset
+    // at policy start and is used only by the Isaac-relative effort path.
+    Eigen::VectorXd previous_applied_effort_;
 
     std::string result_message_{"not started"};
 
@@ -110,6 +115,8 @@ private:
         4.0, 4.0, 4.0, 4.0, 4.0, 4.0, 4.0};
     static constexpr std::array<double, FR3_DOF> kIsaacEffortLimits{
         87.0, 87.0, 87.0, 87.0, 12.0, 12.0, 12.0};
+    static constexpr double kIsaacTorqueRateLimit = 1000.0;  // Nm/s
+    static constexpr double kIsaacEffortUpdatePeriodS = 0.01;  // 100 Hz
     static constexpr double kJointLimitMargin = 0.02;
     static constexpr double kPositionTolerance = 1.0e-6;
     static constexpr double kNominalControlPeriodS = 0.001;

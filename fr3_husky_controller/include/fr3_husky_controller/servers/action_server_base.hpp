@@ -54,6 +54,7 @@ public:
     virtual bool update(const rclcpp::Time& time, const rclcpp::Duration& period) = 0;
     virtual bool isActive() const = 0;
     virtual int priority() const { return 0; }
+    virtual bool requiresRobotDataUpdate() const { return true; }
 
     bool consumeActivateRequest();
     bool consumeCancelRequest();

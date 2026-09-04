@@ -23,7 +23,9 @@ ppo_reach_policy_node:
     joint_velocity_scale: 0.10
     joint_acceleration_scale: 0.20
     # Refresh direct PD targets at the Isaac physics rate; no trajectory limiter.
-    relative_target_refresh_hz: 100.0
+    # Compatibility parameter; relative target is computed once per policy
+    # action (20 Hz) and held until the next action, matching Isaac Lab.
+    relative_target_refresh_hz: 20.0
     joint_limit_margin_rad: 0.02
     ready_tolerance_rad: 0.20
 
@@ -35,3 +37,15 @@ ppo_reach_policy_node:
     target_position: [0.50, 0.00, 0.20]
     target_min: [0.40, -0.10, 0.10]
     target_max: [0.60, 0.10, 0.35]
+
+    # Start recording on a successful start_policy request. An empty log_root
+    # writes to fr3_husky_nn_policy/log/dual_fr3_reach/<start time>/.
+    log_root: ""
+    log_task_name: dual_fr3_reach
+    # Match the Isaac Lab reach reward: link7 + 0.132 m local Z, with the two
+    # arm targets placed at reach center +/- 0.20 m along base Y.
+    left_eef_frame: left_fr3_link7
+    right_eef_frame: right_fr3_link7
+    eef_offset_xyz: [0.0, 0.0, 0.132]
+    robot_root_offset_xyz: [0.0, 0.0, 0.405]
+    reach_offset_y: 0.20

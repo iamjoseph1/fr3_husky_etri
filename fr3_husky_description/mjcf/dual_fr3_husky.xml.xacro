@@ -122,7 +122,7 @@
     <compiler angle="radian" autolimits="true" />
 
     <!-- ── Option ── -->
-    <option timestep="0.001" integrator="implicitfast" />
+    <option timestep="0.001" integrator="implicitfast" gravity="0 0 0" />
 
     <!-- ── Visual ── -->
     <visual>
@@ -179,6 +179,18 @@
     <worldbody>
         <!-- ground plane -->
         <geom name="floor" type="plane" size="0 0 0.05" material="groundplane" />
+
+        <!-- Non-colliding visual markers. The center marker world position is
+             explicitly [0.5, 0.0, 0.705] meters. -->
+        <geom name="reach_target_center" type="sphere" pos="0.5 0.0 0.705"
+              size="0.025" rgba="0.95 0.95 0.95 0.9"
+              contype="0" conaffinity="0" group="0" />
+        <geom name="reach_target_left" type="sphere" pos="0.5 0.2 0.705"
+              size="0.035" rgba="0.1 0.4 1.0 0.9"
+              contype="0" conaffinity="0" group="0" />
+        <geom name="reach_target_right" type="sphere" pos="0.5 -0.2 0.705"
+              size="0.035" rgba="1.0 0.3 0.1 0.9"
+              contype="0" conaffinity="0" group="0" />
 
         <body name="root" pos="0 0 0">
             <joint name="world_joint" type="free" stiffness="0" damping="0" frictionloss="0" armature="0" />

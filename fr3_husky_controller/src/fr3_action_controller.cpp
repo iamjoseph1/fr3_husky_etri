@@ -408,7 +408,14 @@ controller_interface::return_type FR3ActionController::update(const rclcpp::Time
 
     play_time_ = get_node()->now().seconds();
     model_updater_->updateJointStates();
-    model_updater_->updateRobotData();
+    // Idle control and Isaac-relative policy control only require measured joint
+    // state. Avoid the full Pinocchio dynamics/Jacobian update in those paths so
+    // the 1 kHz control loop retains its timing budget. ActionServerBase refreshes
+    // the complete model once when any server is activated.
+    if (active_server_ && active_server_->requiresRobotDataUpdate())
+    {
+        model_updater_->updateRobotData();
+    }
 
     // 1. Deactivate current server if it is done or canceled.
     //    Do this BEFORE scanning for new activations so that a server finishing in this

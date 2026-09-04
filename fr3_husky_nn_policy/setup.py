@@ -14,7 +14,7 @@ setup(
         ("share/" + package_name + "/launch", glob("launch/*.launch.py")),
         ("share/" + package_name + "/models", glob("models/*.npz") + glob("models/*.yaml")),
     ],
-    install_requires=["setuptools", "numpy"],
+    install_requires=["setuptools", "numpy", "matplotlib"],
     zip_safe=True,
     maintainer="DYROS",
     maintainer_email="dyros@snu.ac.kr",

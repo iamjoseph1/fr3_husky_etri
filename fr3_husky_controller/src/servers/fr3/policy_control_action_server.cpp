@@ -177,8 +177,10 @@ void PolicyControl::onStart()
     q_desired_ = q_hold_;
     qdot_desired_ = Eigen::VectorXd::Zero(model_updater_.manipulator_dof_);
     q_offset_ = Eigen::VectorXd::Zero(model_updater_.manipulator_dof_);
+    previous_applied_effort_ = Eigen::VectorXd::Zero(model_updater_.manipulator_dof_);
     activation_time_s_ = node_->now().seconds();
     next_relative_refresh_time_s_ = activation_time_s_;
+    next_effort_update_time_s_ = activation_time_s_;
     last_command_time_s_ = activation_time_s_;
     last_sequence_ = 0;
     has_command_ = false;
@@ -254,8 +256,13 @@ bool PolicyControl::validateTarget(const CommandData& command, std::string& erro
             ? measured + requested
             : requested;
         const size_t joint_index = i % FR3_DOF;
-        if (target < kLowerLimits[joint_index] + kJointLimitMargin ||
-            target > kUpperLimits[joint_index] - kJointLimitMargin)
+        // Relative Isaac-style commands are measured-relative offsets.  Their
+        // refreshed target is projected into the safe band below; rejecting
+        // them here would abort the whole policy as soon as a joint reaches a
+        // limit.  Keep strict validation for absolute commands.
+        if (!command.relative_position_offsets &&
+            (target < kLowerLimits[joint_index] + kJointLimitMargin ||
+             target > kUpperLimits[joint_index] - kJointLimitMargin))
         {
             error = "joint" + std::to_string(i + 1) + " target violates position limit margin";
             return false;
@@ -338,14 +345,12 @@ bool PolicyControl::refreshIsaacRelativeTarget(std::string& error)
     {
         const Eigen::Index index = offset + static_cast<Eigen::Index>(i);
         const size_t joint_index = i % FR3_DOF;
-        const double target = fr3_model_updater_.q_total_(index) + q_offset_(index);
-        if (target < kLowerLimits[joint_index] + kJointLimitMargin ||
-            target > kUpperLimits[joint_index] - kJointLimitMargin)
-        {
-            error = "joint" + std::to_string(i + 1) +
-                    " refreshed relative target violates position limit margin";
-            return false;
-        }
+        const double raw_target =
+            fr3_model_updater_.q_total_(index) + q_offset_(index);
+        const double target = std::clamp(
+            raw_target,
+            kLowerLimits[joint_index] + kJointLimitMargin,
+            kUpperLimits[joint_index] - kJointLimitMargin);
         q_target_(index) = target;
         // Match Isaac Lab RelativeJointPositionAction: the latest measured-relative
         // target goes directly into the PD actuator without a trajectory limiter.
@@ -355,9 +360,15 @@ bool PolicyControl::refreshIsaacRelativeTarget(std::string& error)
     return true;
 }
 
-void PolicyControl::writeIsaacEffortCommand()
+void PolicyControl::writeIsaacEffortCommand(bool update_effort)
 {
     fr3_model_updater_.torque_desired_total_.setZero();
+    if (!update_effort)
+    {
+        fr3_model_updater_.torque_desired_total_ = previous_applied_effort_;
+        fr3_model_updater_.writeCommand(fr3_model_updater_.torque_desired_total_);
+        return;
+    }
     const Eigen::Index offset =
         static_cast<Eigen::Index>(controlled_robot_index_ * FR3_DOF);
     for (size_t i = 0; i < controlled_dof_; ++i)
@@ -369,10 +380,23 @@ void PolicyControl::writeIsaacEffortCommand()
                 (q_desired_(index) - fr3_model_updater_.q_total_(index)) +
             kIsaacDamping[joint_index] *
                 (qdot_desired_(index) - fr3_model_updater_.qdot_total_(index));
-        fr3_model_updater_.torque_desired_total_(index) = std::clamp(
+        const double magnitude_limited_effort = std::clamp(
             effort,
             -kIsaacEffortLimits[joint_index],
             kIsaacEffortLimits[joint_index]);
+        // Isaac Lab v1 applies torque magnitude limiting followed by a
+        // 1000 Nm/s torque-rate limiter.  Apply the same continuous-time
+        // limit here; at the normal 1 kHz controller period this is 1 Nm per
+        // update, equivalent to 10 Nm per 100 Hz actuator step.
+        const double max_effort_step =
+            kIsaacTorqueRateLimit * kIsaacEffortUpdatePeriodS;
+        const double previous = previous_applied_effort_(index);
+        const double applied_effort = previous + std::clamp(
+            magnitude_limited_effort - previous,
+            -max_effort_step,
+            max_effort_step);
+        previous_applied_effort_(index) = applied_effort;
+        fr3_model_updater_.torque_desired_total_(index) = applied_effort;
     }
     // The Franka hardware layer provides gravity compensation. This matches
     // the training asset, where robot-link gravity is disabled.
@@ -443,14 +467,14 @@ PolicyControl::ComputeResult PolicyControl::compute(
         }
         if (isaac_relative_control_)
         {
+            // Isaac Lab processes the relative offset once per policy action
+            // and holds the resulting absolute target for all substeps.
             if (!refreshIsaacRelativeTarget(error))
             {
                 result_message_ = error;
                 RCLCPP_ERROR(node_->get_logger(), "[%s] %s", name_.c_str(), error.c_str());
                 return ComputeResult::ABORTED;
             }
-            next_relative_refresh_time_s_ =
-                now_s + 1.0 / relative_target_refresh_hz_;
         }
         last_sequence_ = command->sequence;
         last_command_time_s_ = command->received_time_s;
@@ -495,23 +519,18 @@ PolicyControl::ComputeResult PolicyControl::compute(
 
     if (isaac_relative_control_)
     {
-        if (now_s >= next_relative_refresh_time_s_)
+        // Hold q_desired_ until the next policy action. Recomputing
+        // measured_q + offset at 100 Hz is not Isaac Lab semantics.
+        const bool update_effort = now_s >= next_effort_update_time_s_;
+        if (update_effort)
         {
-            std::string error;
-            if (!refreshIsaacRelativeTarget(error))
-            {
-                result_message_ = error;
-                RCLCPP_ERROR(node_->get_logger(), "[%s] %s", name_.c_str(), error.c_str());
-                return ComputeResult::ABORTED;
-            }
-            const double refresh_period_s = 1.0 / relative_target_refresh_hz_;
             do
             {
-                next_relative_refresh_time_s_ += refresh_period_s;
+                next_effort_update_time_s_ += kIsaacEffortUpdatePeriodS;
             }
-            while (next_relative_refresh_time_s_ <= now_s);
+            while (next_effort_update_time_s_ <= now_s);
         }
-        writeIsaacEffortCommand();
+        writeIsaacEffortCommand(update_effort);
     }
     else
     {

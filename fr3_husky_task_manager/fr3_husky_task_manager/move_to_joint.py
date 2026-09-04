@@ -11,10 +11,11 @@ from fr3_husky_msgs.action import MoveToJoint
 
 
 class MoveToJointClient(Node):
-    # DEFAULT_LEFT_TARGET_POSITIONS = [0.25, -0.785, 0.0, -2.356, 0.0, 1.571, 0.785]
-    # DEFAULT_RIGHT_TARGET_POSITIONS = [0.0, -0.785, 0.0, -2.356, 0.0, 1.571, 0.785]
-    DEFAULT_LEFT_TARGET_POSITIONS = [-0.4, -0.785, 0.0, -2.356, 0.0, 1.571, 0.785]
-    DEFAULT_RIGHT_TARGET_POSITIONS = [0.4, -0.785, 0.0, -2.356, 0.0, 1.571, 0.785]
+    # DEFAULT_LEFT_TARGET_POSITIONS = [-0.4, -0.785, 0.0, -2.356, 0.0, 1.571, 0.785]
+    # DEFAULT_RIGHT_TARGET_POSITIONS = [0.4, -0.785, 0.0, -2.356, 0.0, 1.571, 0.785]
+    DEFAULT_LEFT_TARGET_POSITIONS = [-0.5236, -0.7854, 0.0, -2.3562, 0.0, 1.5708, 0.7854]
+    DEFAULT_RIGHT_TARGET_POSITIONS = [0.5236, -0.7854, 0.0, -2.3562, 0.0, 1.5708, 0.7854]
+
 
     LEFT_CAMERA_POSITIONS = [-0.45, -0.85, 0.3, -2.25, -0.2, 1.42, 2.15]
     # LEFT_CAMERA_POSITIONS = [-0.95, -0.25, 0.1, -1.35, -0.2, 1.15, 2.0]  ## for coffee scene
@@ -23,6 +24,7 @@ class MoveToJointClient(Node):
     def __init__(
         self,
         arm='both',
+        action_name='/fr3_husky_move_to_joint',
         left_target_positions=None,
         right_target_positions=None,
         max_velocity_scaling_factor=0.1,
@@ -30,7 +32,7 @@ class MoveToJointClient(Node):
     ):
         super().__init__('move_to_joint_client')
 
-        self._action_name = '/fr3_husky_move_to_joint'
+        self._action_name = action_name
         self._client = ActionClient(self, MoveToJoint, self._action_name)
 
         self._goal_handle = None
@@ -45,7 +47,7 @@ class MoveToJointClient(Node):
             'left_target_positions',
             left_target_positions
             if left_target_positions is not None
-            else self.LEFT_CAMERA_POSITIONS,
+            else self.DEFAULT_LEFT_TARGET_POSITIONS,
         )
         self.declare_parameter(
             'right_target_positions',
@@ -176,6 +178,7 @@ class MoveToJointClient(Node):
 
 def run_move_to_joint(
     arm='both',
+    action_name='/fr3_husky_move_to_joint',
     left_target_positions=None,
     right_target_positions=None,
     max_velocity_scaling_factor=0.1,
@@ -184,6 +187,7 @@ def run_move_to_joint(
     rclpy.init()
     node = MoveToJointClient(
         arm=arm,
+        action_name=action_name,
         left_target_positions=left_target_positions,
         right_target_positions=right_target_positions,
         max_velocity_scaling_factor=max_velocity_scaling_factor,
@@ -222,6 +226,12 @@ def main(args=None):
         help='Target arm.',
     )
     parser.add_argument(
+        '--action-name',
+        choices=['/fr3_move_to_joint', '/fr3_husky_move_to_joint'],
+        default='/fr3_move_to_joint',
+        help='MoveToJoint action server to use.',
+    )
+    parser.add_argument(
         '--left-target-positions',
         type=float,
         nargs=7,
@@ -253,6 +263,7 @@ def main(args=None):
     parsed_args = parser.parse_args()
     run_move_to_joint(
         arm=parsed_args.arm,
+        action_name=parsed_args.action_name,
         left_target_positions=parsed_args.left_target_positions,
         right_target_positions=parsed_args.right_target_positions,
         max_velocity_scaling_factor=parsed_args.max_velocity_scaling_factor,

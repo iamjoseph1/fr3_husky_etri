@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import time
 from pathlib import Path
 from typing import Optional
 
@@ -12,8 +13,10 @@ from geometry_msgs.msg import PoseStamped
 from rclpy.action import ActionClient
 from rclpy.node import Node
 from rclpy.qos import QoSProfile, ReliabilityPolicy
+from rclpy.time import Time as RosTime
 from sensor_msgs.msg import JointState
 from std_srvs.srv import Trigger
+from tf2_ros import Buffer, TransformException, TransformListener
 
 from .numpy_actor import NumpyMLPActor
 from .observation import (
@@ -21,6 +24,7 @@ from .observation import (
     DUAL_ARM_JOINT_NAMES,
     build_reach_observation,
 )
+from .reach_logger import ReachRunLogger, rotate_vector
 
 
 LOWER_LIMITS = np.tile(
@@ -65,6 +69,16 @@ class PPOReachPolicyNode(Node):
         self.declare_parameter("target_position", [0.50, 0.0, 0.20])
         self.declare_parameter("target_min", [0.40, -0.10, 0.10])
         self.declare_parameter("target_max", [0.60, 0.10, 0.35])
+        self.declare_parameter("log_root", "")
+        self.declare_parameter("log_task_name", "dual_fr3_reach")
+        self.declare_parameter("left_eef_frame", "left_fr3_link7")
+        self.declare_parameter("right_eef_frame", "right_fr3_link7")
+        self.declare_parameter("eef_offset_xyz", [0.0, 0.0, 0.132])
+        # Isaac Reach root is spawned 0.405 m above the world origin.  Keep
+        # logged EEF positions in that robot-root local frame for comparison
+        # with the policy target command.
+        self.declare_parameter("robot_root_offset_xyz", [0.0, 0.0, 0.405])
+        self.declare_parameter("reach_offset_y", 0.20)
 
         self.base_frame = str(self.get_parameter("base_frame").value)
         self.actor = NumpyMLPActor(self.get_parameter("model_path").value)
@@ -82,6 +96,13 @@ class PPOReachPolicyNode(Node):
         self.target_position = self._vector_parameter("target_position")
         self.target_min = self._vector_parameter("target_min")
         self.target_max = self._vector_parameter("target_max")
+        self.left_eef_frame = str(self.get_parameter("left_eef_frame").value)
+        self.right_eef_frame = str(self.get_parameter("right_eef_frame").value)
+        self.eef_offset_xyz = self._vector_parameter("eef_offset_xyz")
+        self.robot_root_offset_xyz = self._vector_parameter("robot_root_offset_xyz")
+        self.reach_offset_y = float(self.get_parameter("reach_offset_y").value)
+        if not np.isfinite(self.reach_offset_y) or self.reach_offset_y < 0.0:
+            raise ValueError("reach_offset_y must be finite and non-negative")
         self.joint_position = np.full(14, np.nan, dtype=np.float64)
         self.joint_velocity = np.full(14, np.nan, dtype=np.float64)
         self.joint_update_ns = np.zeros(14, dtype=np.int64)
@@ -92,6 +113,11 @@ class PPOReachPolicyNode(Node):
         self.goal_pending = False
         self.auto_start_requested = False
         self.last_status_log_ns = 0
+        self.run_logger: Optional[ReachRunLogger] = None
+        self.logging_start_monotonic_ns = 0
+
+        self.tf_buffer = Buffer()
+        self.tf_listener = TransformListener(self.tf_buffer, self, spin_thread=False)
 
         self.create_subscription(
             JointState,
@@ -269,7 +295,97 @@ class PPOReachPolicyNode(Node):
             goal, feedback_callback=self._feedback_callback
         )
         future.add_done_callback(self._goal_response_callback)
+        self._start_reach_logging()
         return True, "dual-arm policy control goal requested"
+
+    def _start_reach_logging(self):
+        if self.run_logger is not None:
+            return
+
+        configured_root = str(self.get_parameter("log_root").value).strip()
+        log_root = (
+            Path(configured_root).expanduser()
+            if configured_root
+            else Path(__file__).resolve().parents[1] / "log"
+        )
+        try:
+            self.run_logger = ReachRunLogger(
+                log_root=log_root,
+                task_name=str(self.get_parameter("log_task_name").value),
+                base_frame=self.base_frame,
+                left_eef_frame=self.left_eef_frame,
+                right_eef_frame=self.right_eef_frame,
+                eef_offset_xyz=self.eef_offset_xyz,
+                robot_root_offset_xyz=self.robot_root_offset_xyz,
+                reach_offset_y=self.reach_offset_y,
+                sample_rate_hz=float(self.get_parameter("policy_rate_hz").value),
+            )
+            self.logging_start_monotonic_ns = time.monotonic_ns()
+            self.get_logger().info(
+                f"Recording dual-arm EEF trajectory to {self.run_logger.run_dir}"
+            )
+            self._record_eef_sample()
+        except (OSError, ValueError) as error:
+            self.run_logger = None
+            self.get_logger().error(f"Failed to start EEF trajectory logging: {error}")
+
+    def _record_eef_sample(self):
+        if self.run_logger is None:
+            return
+        try:
+            left_position = self._eef_position_in_base(self.left_eef_frame)
+            right_position = self._eef_position_in_base(self.right_eef_frame)
+            elapsed_s = (
+                time.monotonic_ns() - self.logging_start_monotonic_ns
+            ) * 1.0e-9
+            self.run_logger.append(
+                elapsed_s=elapsed_s,
+                ros_time_ns=self._now_ns(),
+                target_center=self.target_position,
+                left_eef=left_position,
+                right_eef=right_position,
+            )
+        except TransformException as error:
+            self._log_status(
+                f"Waiting for EEF transforms in '{self.base_frame}': {error}"
+            )
+        except (OSError, ValueError) as error:
+            self._log_status(f"Skipping invalid EEF log sample: {error}")
+
+    def _eef_position_in_base(self, source_frame: str) -> np.ndarray:
+        transform = self.tf_buffer.lookup_transform(
+            self.base_frame, source_frame, RosTime()
+        ).transform
+        translation = np.asarray(
+            [transform.translation.x, transform.translation.y, transform.translation.z],
+            dtype=np.float64,
+        )
+        quaternion_xyzw = np.asarray(
+            [
+                transform.rotation.x,
+                transform.rotation.y,
+                transform.rotation.z,
+                transform.rotation.w,
+            ],
+            dtype=np.float64,
+        )
+        return (
+            translation
+            + rotate_vector(quaternion_xyzw, self.eef_offset_xyz)
+            - self.robot_root_offset_xyz
+        )
+
+    def finalize_reach_log(self):
+        if self.run_logger is None:
+            return
+        try:
+            run_dir, plot_paths = self.run_logger.finalize()
+            self.get_logger().info(
+                f"Saved {self.run_logger.sample_count} EEF samples and "
+                f"{len(plot_paths)} plots to {run_dir}"
+            )
+        except Exception as error:  # Keep shutdown progressing if plotting fails.
+            self.get_logger().error(f"Failed to finalize EEF trajectory plots: {error}")
 
     def _goal_response_callback(self, future):
         self.goal_pending = False
@@ -328,6 +444,8 @@ class PPOReachPolicyNode(Node):
                 self._log_status(message)
             return
 
+        self._record_eef_sample()
+
         if (
             self.get_parameter("auto_start").value
             and not self.get_parameter("shadow_mode").value
@@ -376,18 +494,28 @@ class PPOReachPolicyNode(Node):
 
         target = self.joint_position + delta
 
+        # Keep the learned policy goal/action semantics, but project the
+        # real-robot reference into a small safe band at the joint limits.
+        # The controller applies the same projection at its 100 Hz refresh,
+        # so this does not terminate the policy when a joint reaches a limit.
         margin = float(self.get_parameter("joint_limit_margin_rad").value)
-        if not np.all(
-            (target >= LOWER_LIMITS + margin)
-            & (target <= UPPER_LIMITS - margin)
-        ):
-            if self.goal_active:
-                self._cancel_for_fault(f"Policy target violates joint limits: {target}")
+        safe_lower = LOWER_LIMITS + margin
+        safe_upper = UPPER_LIMITS - margin
+        if (not np.isfinite(margin)) or np.any(safe_lower >= safe_upper):
+            self._cancel_for_fault("joint_limit_margin_rad leaves no safe range")
             return
+        target = np.clip(target, safe_lower, safe_upper)
+        delta = target - self.joint_position
 
         self.previous_action = clipped_action.copy()
         if self.get_parameter("shadow_mode").value or not self.goal_active:
             return
+
+        elapsed_s = (time.monotonic_ns() - self.logging_start_monotonic_ns) * 1.0e-9
+        if self.run_logger is not None:
+            self.run_logger.append_policy_trace(
+                elapsed_s, self._now_ns(), clipped_action,
+                self.joint_position, self.joint_velocity, target)
 
         self.sequence += 1
         command = PolicyJointCommand()
@@ -396,9 +524,8 @@ class PPOReachPolicyNode(Node):
         command.sequence = self.sequence
         command.robot_name = "dual"
         # Isaac Lab's RelativeJointPositionAction keeps the processed offset
-        # constant for one policy step and recomputes q_target = q + offset at
-        # every 100 Hz physics substep. Send the offset, not a stale absolute
-        # target, so the real-time controller can reproduce that behavior.
+        # Hold this processed offset for one policy step; the controller turns
+        # it into one absolute q_target and holds that target across substeps.
         command.target_positions = delta.tolist()
         command.relative_position_offsets = True
         command.gripper_action = 0.0
@@ -415,6 +542,7 @@ def main(args: Optional[list[str]] = None):
     finally:
         if node.goal_handle is not None:
             node.goal_handle.cancel_goal_async()
+        node.finalize_reach_log()
         node.destroy_node()
         if rclpy.ok():
             rclpy.shutdown()
