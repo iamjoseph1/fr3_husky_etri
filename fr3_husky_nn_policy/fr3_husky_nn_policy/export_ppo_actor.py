@@ -7,7 +7,11 @@ from pathlib import Path
 import numpy as np
 
 
-def export_actor(checkpoint_path: str | Path, output_path: str | Path) -> Path:
+def export_actor(
+    checkpoint_path: str | Path,
+    output_path: str | Path,
+    output_activation: str = "identity",
+) -> Path:
     """Export an RSL-RL MLP actor state dict to a pickle-free NumPy archive."""
 
     try:
@@ -19,6 +23,11 @@ def export_actor(checkpoint_path: str | Path, output_path: str | Path) -> Path:
 
     checkpoint_path = Path(checkpoint_path).expanduser().resolve()
     output_path = Path(output_path).expanduser().resolve()
+    if output_activation not in ("identity", "tanh"):
+        raise ValueError(
+            "output_activation must be either 'identity' or 'tanh', "
+            f"got {output_activation!r}"
+        )
     checkpoint = torch.load(checkpoint_path, map_location="cpu", weights_only=True)
     state = checkpoint.get("actor_state_dict")
     if state is None:
@@ -36,8 +45,9 @@ def export_actor(checkpoint_path: str | Path, output_path: str | Path) -> Path:
 
     digest = hashlib.sha256(checkpoint_path.read_bytes()).hexdigest()
     payload = {
-        "format_version": np.asarray(1, dtype=np.int64),
+        "format_version": np.asarray(2, dtype=np.int64),
         "activation": np.asarray("elu"),
+        "output_activation": np.asarray(output_activation),
         "num_layers": np.asarray(len(layer_indices), dtype=np.int64),
         "source_sha256": np.asarray(digest),
         "source_iteration": np.asarray(int(checkpoint.get("iter", -1)), dtype=np.int64),
@@ -59,8 +69,14 @@ def main():
     parser = argparse.ArgumentParser(description="Export an RSL-RL MLP actor to NPZ")
     parser.add_argument("checkpoint", help="Path to model_*.pt")
     parser.add_argument("output", help="Output .npz path")
+    parser.add_argument(
+        "--output-activation",
+        choices=("identity", "tanh"),
+        default="identity",
+        help="Deterministic activation applied after the final actor layer",
+    )
     args = parser.parse_args()
-    path = export_actor(args.checkpoint, args.output)
+    path = export_actor(args.checkpoint, args.output, args.output_activation)
     print(path)
 
 

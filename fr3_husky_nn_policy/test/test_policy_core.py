@@ -24,10 +24,34 @@ def test_numpy_actor_elu(tmp_path):
         bias_1=np.asarray([0.1], dtype=np.float32),
     )
     actor = NumpyMLPActor(model_path)
+    assert actor.format_version == 1
+    assert actor.output_activation == "identity"
     value = np.asarray([0.2, 0.4], dtype=np.float32)
     hidden = np.asarray([np.expm1(-0.2), 0.05], dtype=np.float32)
     expected = np.asarray([0.5 * hidden[0] - 0.25 * hidden[1] + 0.1])
     np.testing.assert_allclose(actor(value), expected, rtol=1.0e-6, atol=1.0e-6)
+
+
+def test_numpy_actor_tanh_output(tmp_path):
+    model_path = tmp_path / "tanh_actor.npz"
+    np.savez(
+        model_path,
+        format_version=np.asarray(2, dtype=np.int64),
+        activation=np.asarray("elu"),
+        output_activation=np.asarray("tanh"),
+        num_layers=np.asarray(1, dtype=np.int64),
+        source_sha256=np.asarray("test-tanh"),
+        weight_0=np.asarray([[2.0, -1.0], [-0.5, 0.25]], dtype=np.float32),
+        bias_0=np.asarray([0.1, -0.2], dtype=np.float32),
+    )
+    actor = NumpyMLPActor(model_path)
+    value = np.asarray([0.4, -0.3], dtype=np.float32)
+    expected = np.tanh(actor.weights[0] @ value + actor.biases[0])
+
+    assert actor.format_version == 2
+    assert actor.output_activation == "tanh"
+    np.testing.assert_allclose(actor(value), expected, rtol=1.0e-6, atol=1.0e-6)
+    assert np.all(np.abs(actor(value)) < 1.0)
 
 
 def test_liftcube_observation_layout():
@@ -102,7 +126,9 @@ def test_reach_deployed_model_metadata():
     actor = NumpyMLPActor(model_path)
     assert actor.input_dim == 58
     assert actor.output_dim == 14
+    assert actor.format_version == 2
+    assert actor.output_activation == "tanh"
     assert (
         actor.source_sha256
-        == "0e57514b34712119b72e78b98eaf515d9b5c64140261d0eb91bfa0df80883b8e"
+        == "e74393b2f4013cf044ba3b4bbb5fe56852565ef0a4930d918eb78de2aa937636"
     )

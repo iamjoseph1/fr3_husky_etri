@@ -1,9 +1,12 @@
 name: dual_fr3_reach
+source_run: dual_fr3_reach_sim2real_v1/2026-09-03_18-57-37
 source_checkpoint: model_4999.pt
-source_sha256: 0e57514b34712119b72e78b98eaf515d9b5c64140261d0eb91bfa0df80883b8e
+source_sha256: e74393b2f4013cf044ba3b4bbb5fe56852565ef0a4930d918eb78de2aa937636
 source_iteration: 4999
 runtime: numpy
 activation: elu
+output_activation: tanh
+policy_distribution: tanh_squashed_gaussian
 network_dims: [58, 256, 128, 64, 14]
 policy_rate_hz: 20.0
 controlled_robot: dual
@@ -20,6 +23,6 @@ observation:
   - {name: reach_center_position_in_base, size: 3}
   - {name: target_position_in_base, size: 3}
   - {name: target_quaternion_wxyz, size: 4, fixed: [1.0, 0.0, 0.0, 0.0]}
-  - {name: previous_raw_action, size: 14}
+  - {name: previous_bounded_action, size: 14}
   - {name: zero_plate_forces, size: 2}
   - {name: zero_object_orientation, size: 4}

@@ -13,14 +13,16 @@ ppo_reach_policy_node:
     # 0 means keep following terminal target updates until explicitly stopped.
     max_duration_s: 0.0
 
-    # Policy output is still applied as current_joint_position + 0.1 * raw_action.
-    max_policy_target_delta_rad: 1.0
+    # The NPZ applies the policy's final tanh. This clip is only a numerical guard;
+    # relative offset = 0.1 * bounded_action.
+    action_clip: 1.0
+    max_policy_target_delta_rad: 0.11
     # Legacy absolute-target limiter parameters. They are ignored by Reach,
     # which uses Isaac-style relative control, but remain in the shared action.
     max_actuator_step_rad: 0.001
     joint_velocity_scale: 0.10
     joint_acceleration_scale: 0.20
-    # Match Isaac Lab: 100 Hz physics with decimation=5 and a 20 Hz policy.
+    # Refresh direct PD targets at the Isaac physics rate; no trajectory limiter.
     relative_target_refresh_hz: 100.0
     joint_limit_margin_rad: 0.02
     ready_tolerance_rad: 0.20

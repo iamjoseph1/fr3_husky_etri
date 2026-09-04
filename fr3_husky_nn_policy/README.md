@@ -113,8 +113,15 @@ frame, and the policy moves both end effectors toward the corresponding points
 
 - Model: models/dual_fr3_reach_actor.npz
 - Network: 58 → 256 → 128 → 64 → 14
+- Deterministic output: tanh(last linear layer), float32 range `[-1, 1]`
 - Launch: dual_fr3_reach_policy.launch.py
 - Node: ppo_reach_policy_node
+
+The deployed model is exported from
+`dual_fr3_reach_sim2real_v1/2026-09-03_18-57-37/model_4999.pt`.
+The NPZ stores `output_activation=tanh`, and the Reach node rejects legacy
+identity-output artifacts so an unsquashed policy cannot command the robot.
+The node-side `action_clip=1.0` remains a numerical safety guard.
 
 At each policy step the node publishes the 14 relative joint offsets rather
 than an absolute target. The controller holds that offset for the 50 ms policy
@@ -184,6 +191,18 @@ Run the exporter only in an Isaac/RSL-RL environment containing PyTorch:
 export_ppo_actor /path/to/model_4999.pt /path/to/output_actor.npz
 ~~~
 
+For a tanh-squashed policy such as Reach Sim2Real v1, include the final
+deterministic distribution transform explicitly:
+
+~~~bash
+export_ppo_actor \
+  /path/to/dual_fr3_reach_sim2real_v1/2026-09-03_18-57-37/model_4999.pt \
+  /path/to/dual_fr3_reach_actor.npz \
+  --output-activation tanh
+~~~
+
 Examples of output names are dual_fr3_lift_v3_actor.npz and
 dual_fr3_reach_actor.npz. The exported archive contains numeric arrays and
-metadata only and is loaded at runtime with allow_pickle=False.
+metadata, including the final output activation, and is loaded at runtime with
+allow_pickle=False. Artifacts without `output_activation` remain format-v1
+identity actors for backward compatibility.

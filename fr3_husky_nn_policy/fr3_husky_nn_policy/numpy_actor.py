@@ -11,10 +11,26 @@ class NumpyMLPActor:
     def __init__(self, model_path: str | Path):
         self.model_path = Path(model_path)
         archive = np.load(self.model_path, allow_pickle=False)
+        self.format_version = (
+            int(archive["format_version"].item())
+            if "format_version" in archive
+            else 1
+        )
+        if self.format_version not in (1, 2):
+            raise ValueError(f"Unsupported actor format version: {self.format_version}")
         self.activation = str(archive["activation"].item())
+        self.output_activation = (
+            str(archive["output_activation"].item())
+            if "output_activation" in archive
+            else "identity"
+        )
         self.num_layers = int(archive["num_layers"].item())
         if self.activation != "elu":
             raise ValueError(f"Unsupported activation: {self.activation}")
+        if self.output_activation not in ("identity", "tanh"):
+            raise ValueError(
+                f"Unsupported actor output activation: {self.output_activation}"
+            )
 
         self.weights = []
         self.biases = []
@@ -51,6 +67,8 @@ class NumpyMLPActor:
             output = weight @ output + bias
             if index + 1 < self.num_layers:
                 output = self._elu_in_place(output)
+        if self.output_activation == "tanh":
+            output = np.tanh(output)
         if not np.all(np.isfinite(output)):
             raise ValueError("Actor output contains NaN or Inf")
         return np.asarray(output, dtype=np.float32)

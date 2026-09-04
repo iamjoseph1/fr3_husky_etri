@@ -52,7 +52,8 @@ class PPOReachPolicyNode(Node):
         self.declare_parameter("joint_state_timeout_s", 0.15)
         self.declare_parameter("command_timeout_s", 0.15)
         self.declare_parameter("max_duration_s", 0.0)
-        self.declare_parameter("max_policy_target_delta_rad", 1.0)
+        self.declare_parameter("action_clip", 1.0)
+        self.declare_parameter("max_policy_target_delta_rad", 0.11)
         self.declare_parameter("max_actuator_step_rad", 0.001)
         self.declare_parameter("joint_velocity_scale", 0.10)
         self.declare_parameter("joint_acceleration_scale", 0.20)
@@ -71,6 +72,11 @@ class PPOReachPolicyNode(Node):
             raise ValueError(
                 f"dual_fr3_reach requires a 58->14 actor, got "
                 f"{self.actor.input_dim}->{self.actor.output_dim}"
+            )
+        if self.actor.output_activation != "tanh":
+            raise ValueError(
+                "dual_fr3_reach Sim2Real v1 requires a tanh-bounded actor; "
+                f"model declares output_activation={self.actor.output_activation!r}"
             )
 
         self.target_position = self._vector_parameter("target_position")
@@ -119,7 +125,8 @@ class PPOReachPolicyNode(Node):
         mode = "SHADOW" if self.get_parameter("shadow_mode").value else "COMMAND"
         self.get_logger().info(
             f"Loaded {self.actor.model_path} ({self.actor.input_dim}->{self.actor.output_dim}, "
-            f"source {self.actor.source_sha256[:12]}...), mode={mode}, rate={rate:.1f} Hz"
+            f"output={self.actor.output_activation}, source {self.actor.source_sha256[:12]}...), "
+            f"mode={mode}, rate={rate:.1f} Hz"
         )
         self.get_logger().info(
             f"Reach target in '{self.base_frame}': {self.target_position.tolist()}"
@@ -350,7 +357,12 @@ class PPOReachPolicyNode(Node):
                 self._log_status(f"Policy inference failed: {error}")
             return
 
-        delta = 0.1 * action.astype(np.float64)
+        action_clip = float(self.get_parameter("action_clip").value)
+        if not np.isfinite(action_clip) or action_clip <= 0.0:
+            self._cancel_for_fault("action_clip must be finite and positive")
+            return
+        clipped_action = np.clip(action, -action_clip, action_clip)
+        delta = 0.1 * clipped_action.astype(np.float64)
         max_policy_delta = float(
             self.get_parameter("max_policy_target_delta_rad").value
         )
@@ -373,7 +385,7 @@ class PPOReachPolicyNode(Node):
                 self._cancel_for_fault(f"Policy target violates joint limits: {target}")
             return
 
-        self.previous_action = action.copy()
+        self.previous_action = clipped_action.copy()
         if self.get_parameter("shadow_mode").value or not self.goal_active:
             return
 
