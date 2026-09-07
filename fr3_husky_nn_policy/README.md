@@ -51,11 +51,13 @@ actuator command smoothing is configured separately with
 `joint_acceleration_scale`. Reach does not use those three smoothing values;
 its legacy `relative_target_refresh_hz` parameter is retained for action API
 compatibility; targets are computed once per 20 Hz policy action by
-default).
+default.
 
-Before enabling either policy, verify the joint names, state update rate,
-coordinate frame, initial pose, policy outputs, and configured safety limits in
-shadow mode.
+### Shadow mode
+
+To run either task without sending commands to the robot, add
+`shadow_mode:=true` to its launch command. Use `shadow_mode:=false` only after
+checking the robot state, initial pose, coordinate frame, and safety limits.
 
 ## LiftCube
 
@@ -77,16 +79,7 @@ the ArUco perception pipeline.
 - Start: /ppo_liftcube_policy_node/start_policy
 - Stop: /ppo_liftcube_policy_node/stop_policy
 
-### Shadow mode
-
-~~~bash
-ros2 launch fr3_husky_nn_policy dual_fr3_lift_policy.launch.py shadow_mode:=true
-~~~
-
-Confirm that the object pose is fresh and inside the configured workspace, and
-that the target lies inside the training range.
-
-### Command mode
+### Execution order
 
 Move the right arm to the training ready pose and open its gripper. Then launch
 without auto-start and explicitly start the policy:
@@ -145,37 +138,45 @@ The target must remain inside the training range:
 | y | -0.10 m | 0.10 m |
 | z | 0.10 m | 0.35 m |
 
-### Shadow mode
+### Execution order
 
-Start the policy without robot commands:
+Run the following steps in order. Do not start the policy before both arms have
+reached the training ready pose and a Reach target has been published.
+
+1. In terminal 1, launch the controller and Reach policy node without
+   auto-start:
 
 ~~~bash
-ros2 launch fr3_husky_nn_policy dual_fr3_reach_policy.launch.py shadow_mode:=true
+ros2 launch fr3_husky_nn_policy dual_fr3_reach_policy.launch.py shadow_mode:=false auto_start:=false
 ~~~
 
-In a second terminal, start the target CLI:
+2. In terminal 2, move both arms to the training ready pose. Wait until the
+   command finishes successfully:
+
+~~~bash
+ros2 run fr3_husky_task_manager move_to_joint
+~~~
+
+3. In terminal 3, start the target CLI and enter the desired center position
+   as `x y z` in meters. The example below publishes `(0.50, 0.00, 0.20)` in
+   the robot base frame:
 
 ~~~bash
 source /home/dyros/etri_ws/install/setup.bash
 ros2 run fr3_husky_nn_policy reach_target_cli
 ~~~
 
-Enter a target as three values in meters:
-
 ~~~text
 reach target> 0.50 0.00 0.20
 ~~~
 
-The same CLI can publish new targets while the policy is running.
+Keep this CLI open if the target needs to be updated while the policy is
+running.
 
-### Command mode
-
-Move both arms to the training ready pose. Then launch without auto-start,
-publish the desired target from reach_target_cli, and explicitly start control:
+4. After the ready-pose motion and target publication are complete, start the
+   policy from terminal 4:
 
 ~~~bash
-ros2 launch fr3_husky_nn_policy dual_fr3_reach_policy.launch.py shadow_mode:=false auto_start:=false
-
 ros2 service call /ppo_reach_policy_node/start_policy std_srvs/srv/Trigger {}
 ~~~
 
