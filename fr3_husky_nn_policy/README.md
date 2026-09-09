@@ -111,7 +111,7 @@ frame, and the policy moves both end effectors toward the corresponding points
 - Node: ppo_reach_policy_node
 
 The deployed model is exported from
-`dual_fr3_reach_sim2real_v1/2026-09-03_18-57-37/model_4999.pt`.
+`dual_fr3_reach_sim2real_v2/2026-09-09_11-05-39/model_4999.pt`.
 The NPZ stores `output_activation=tanh`, and the Reach node rejects legacy
 identity-output artifacts so an unsquashed policy cannot command the robot.
 The node-side `action_clip=1.0` remains a numerical safety guard.
@@ -214,12 +214,12 @@ Run the exporter only in an Isaac/RSL-RL environment containing PyTorch:
 export_ppo_actor /path/to/model_4999.pt /path/to/output_actor.npz
 ~~~
 
-For a tanh-squashed policy such as Reach Sim2Real v1, include the final
+For a tanh-squashed policy such as Reach Sim2Real v2, include the final
 deterministic distribution transform explicitly:
 
 ~~~bash
 export_ppo_actor \
-  /path/to/dual_fr3_reach_sim2real_v1/2026-09-03_18-57-37/model_4999.pt \
+  /path/to/dual_fr3_reach_sim2real_v2/2026-09-09_11-05-39/model_4999.pt \
   /path/to/dual_fr3_reach_actor.npz \
   --output-activation tanh
 ~~~

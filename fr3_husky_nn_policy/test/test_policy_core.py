@@ -130,5 +130,5 @@ def test_reach_deployed_model_metadata():
     assert actor.output_activation == "tanh"
     assert (
         actor.source_sha256
-        == "e74393b2f4013cf044ba3b4bbb5fe56852565ef0a4930d918eb78de2aa937636"
+        == "150eac1b3014b8e1f172809cc81c618a90f2c976abd6def7c6cc7d3c5e5188cc"
     )
