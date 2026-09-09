@@ -113,7 +113,7 @@ def test_reach_observation_layout():
     np.testing.assert_array_equal(observation[28:31], target_position)
     np.testing.assert_array_equal(observation[31:34], target_position)
     np.testing.assert_array_equal(
-        observation[34:38], np.asarray([1.0, 0.0, 0.0, 0.0])
+        observation[34:38], np.asarray([0.0, 0.0, 0.0, 1.0])
     )
     np.testing.assert_array_equal(observation[38:52], previous_action)
     np.testing.assert_array_equal(observation[52:58], np.zeros(6))

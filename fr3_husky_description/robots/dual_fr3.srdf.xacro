@@ -1108,6 +1108,14 @@
     
     </xacro:if>
 
+    <!-- With hand=false the reach model mounts both the calibrated D435i and
+         the Isaac-style plate rigidly to link8. Their collision geometries
+         intentionally overlap as parts of the same end-effector assembly. -->
+    <xacro:unless value="$(arg hand)">
+        <disable_collisions link1="left_d435i_link" link2="left_fr3_plate_ee" reason="Adjacent"/>
+        <disable_collisions link1="right_d435i_link" link2="right_fr3_plate_ee" reason="Adjacent"/>
+    </xacro:unless>
+
     <group name="dual_fr3_arm">
         <joint name="left_fr3_joint1"/>
         <joint name="left_fr3_joint2"/>

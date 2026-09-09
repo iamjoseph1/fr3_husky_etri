@@ -1,3 +1,5 @@
 .vscode
 /fr3_husky_nn_policy/log/
 /logs/torque_step/
+/log
+/logs

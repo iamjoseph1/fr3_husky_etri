@@ -76,10 +76,10 @@ class PPOReachPolicyNode(Node):
         self.declare_parameter("left_eef_frame", "left_fr3_link7")
         self.declare_parameter("right_eef_frame", "right_fr3_link7")
         self.declare_parameter("eef_offset_xyz", [0.0, 0.0, 0.132])
-        # Isaac Reach root is spawned 0.405 m above the world origin.  Keep
-        # logged EEF positions in that robot-root local frame for comparison
-        # with the policy target command.
-        self.declare_parameter("robot_root_offset_xyz", [0.0, 0.0, 0.405])
+        # Kept for log metadata compatibility. TF lookup(base, link) already
+        # returns robot-base-local coordinates, so no world/root offset is
+        # applied to the measured EEF position.
+        self.declare_parameter("robot_root_offset_xyz", [0.0, 0.0, 0.0])
         self.declare_parameter("reach_offset_y", 0.20)
 
         self.base_frame = str(self.get_parameter("base_frame").value)
@@ -91,7 +91,7 @@ class PPOReachPolicyNode(Node):
             )
         if self.actor.output_activation != "tanh":
             raise ValueError(
-                "dual_fr3_reach Sim2Real v1 requires a tanh-bounded actor; "
+                "dual_fr3_reach Sim2Real requires a tanh-bounded actor; "
                 f"model declares output_activation={self.actor.output_activation!r}"
             )
 
@@ -371,11 +371,11 @@ class PPOReachPolicyNode(Node):
             ],
             dtype=np.float64,
         )
-        return (
-            translation
-            + rotate_vector(quaternion_xyzw, self.eef_offset_xyz)
-            - self.robot_root_offset_xyz
-        )
+        # lookup_transform(base, link) is already expressed in `base_frame`.
+        # Subtracting Isaac's world-space spawn height here would shift only
+        # the diagnostic trajectory by 0.405 m and make it disagree with the
+        # base-frame target used by the policy.
+        return translation + rotate_vector(quaternion_xyzw, self.eef_offset_xyz)
 
     def finalize_reach_log(self):
         if self.run_logger is None:
@@ -509,9 +509,18 @@ class PPOReachPolicyNode(Node):
         target = np.clip(target, safe_lower, safe_upper)
         delta = target - self.joint_position
 
-        self.previous_action = clipped_action.copy()
-        if self.get_parameter("shadow_mode").value or not self.goal_active:
+        if self.get_parameter("shadow_mode").value:
+            # Shadow inference deliberately advances the previous-action term
+            # without publishing commands.
+            self.previous_action = clipped_action.copy()
             return
+        if not self.goal_active:
+            # In command mode, previous_action means the last action actually
+            # applied in Isaac Lab. Keep it at the reset value while waiting
+            # for an explicit start_policy request and action-goal acceptance.
+            return
+
+        self.previous_action = clipped_action.copy()
 
         elapsed_s = (time.monotonic_ns() - self.logging_start_monotonic_ns) * 1.0e-9
         if self.run_logger is not None:

@@ -1,7 +1,9 @@
 ppo_reach_policy_node:
   ros__parameters:
     model_path: ""
-    joint_states_topic: /joint_states
+    # Subscribe to the dual-arm broadcaster directly. This topic exists for
+    # both real hardware and MuJoCo and contains exactly the 14 arm joints.
+    joint_states_topic: /dual_fr3/joint_states
     target_pose_topic: /reach_target_pose
     base_frame: base
     command_topic: /policy_joint_command
@@ -46,5 +48,6 @@ ppo_reach_policy_node:
     left_eef_frame: left_fr3_link7
     right_eef_frame: right_fr3_link7
     eef_offset_xyz: [0.0, 0.0, 0.132]
-    robot_root_offset_xyz: [0.0, 0.0, 0.405]
+    # Legacy log metadata only. EEF TF is already expressed in `base`.
+    robot_root_offset_xyz: [0.0, 0.0, 0.0]
     reach_offset_y: 0.20

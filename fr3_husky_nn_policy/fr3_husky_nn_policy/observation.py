@@ -61,15 +61,16 @@ def build_reach_observation(
         if not np.all(np.isfinite(value)):
             raise ValueError(f"{name} contains NaN or Inf")
 
-    # UniformPoseCommand uses (w, x, y, z); reach was trained with zero RPY.
-    target_quaternion_wxyz = np.asarray([1.0, 0.0, 0.0, 0.0], dtype=np.float32)
+    # Reach v2 was trained with Isaac Lab 3.0, whose quaternion convention is
+    # (x, y, z, w). Zero RPY therefore produces the identity below.
+    target_quaternion_xyzw = np.asarray([0.0, 0.0, 0.0, 1.0], dtype=np.float32)
     observation = np.concatenate(
         (
             joint_position - DEFAULT_DUAL_ARM_JOINT_POSITION,
             joint_velocity,
             target_position,
             target_position,
-            target_quaternion_wxyz,
+            target_quaternion_xyzw,
             previous_action,
             np.zeros(2, dtype=np.float32),
             np.zeros(4, dtype=np.float32),

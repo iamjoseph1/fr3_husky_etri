@@ -124,6 +124,9 @@ def _launch_setup(context, *args, **kwargs):
         cm_params.extend([
             {'mujoco_scene_xacro_path': mjcf_path},
             {'mujoco_scene_xacro_args': xacro_args},
+            {'mujoco_reach_target_topic': '/reach_target_pose'},
+            {'mujoco_reach_target_frame': 'base'},
+            {'mujoco_reach_target_offset_y': 0.20},
         ])
     controller_prefix = 'taskset -c 2,3' if use_mujoco.lower() == 'false' else None
 
@@ -277,6 +280,15 @@ def _launch_setup(context, *args, **kwargs):
         kinematics    = _load_yaml('fr3_husky_moveit_config', os.path.join('config', cfg_sub, 'kinematics.yaml'))
         ompl_yaml     = _load_yaml('fr3_husky_moveit_config', os.path.join('config', 'ompl_planning.yaml'))
         ctrl_mgr_yaml = _load_yaml('fr3_husky_moveit_config', ctrl_yaml)
+        # MuJoCo's joint_state_broadcaster already publishes a complete, valid
+        # JointState.  Subscribe to it directly: passing it through
+        # joint_state_publisher can duplicate position entries for joints that
+        # are also present in robot_description.
+        move_group_remappings = (
+            [('joint_states', jsp_src[0])]
+            if use_mujoco.lower() == 'true'
+            else []
+        )
 
         if os.environ['ROS_DISTRO'] == 'humble':
             ompl_cfg = {
@@ -299,6 +311,7 @@ def _launch_setup(context, *args, **kwargs):
                 executable='move_group',
                 namespace=namespace,
                 output='screen',
+                remappings=move_group_remappings,
                 parameters=[
                     {'robot_description': mg_robot_desc},
                     {'robot_description_semantic': mg_srdf},
@@ -340,6 +353,7 @@ def _launch_setup(context, *args, **kwargs):
                 executable='move_group',
                 namespace=namespace,
                 output='screen',
+                remappings=move_group_remappings,
                 parameters=[
                     {'robot_description': mg_robot_desc},
                     {'robot_description_semantic': mg_srdf},
@@ -356,17 +370,6 @@ def _launch_setup(context, *args, **kwargs):
                     {'publish_planning_scene': True, 'publish_geometry_updates': True,
                      'publish_state_updates': True, 'publish_transforms_updates': True},
                 ],
-            ))
-
-        # MuJoCo: bridge {side}_fr3/joint_states → joint_states for move_group's scene monitor
-        if use_mujoco.lower() == 'true':
-            nodes.append(Node(
-                package='joint_state_publisher',
-                executable='joint_state_publisher',
-                name='joint_state_publisher_moveit',
-                namespace=namespace,
-                parameters=[{'source_list': jsp_src, 'rate': 30}],
-                output='screen',
             ))
 
     return nodes

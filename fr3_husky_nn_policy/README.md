@@ -147,7 +147,7 @@ reached the training ready pose and a Reach target has been published.
    auto-start:
 
 ~~~bash
-ros2 launch fr3_husky_nn_policy dual_fr3_reach_policy.launch.py shadow_mode:=false auto_start:=false
+ros2 launch fr3_husky_nn_policy dual_fr3_reach_policy.launch.py shadow_mode:=false auto_start:=false launch_move_group:=true use_mujoco:=true
 ~~~
 
 2. In terminal 2, move both arms to the training ready pose. Wait until the

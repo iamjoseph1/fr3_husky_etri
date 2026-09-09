@@ -16,13 +16,13 @@ target_frame: base
 target_training_range:
   min: [0.40, -0.10, 0.10]
   max: [0.60, 0.10, 0.35]
-quaternion_order: wxyz
+quaternion_order: xyzw
 observation:
   - {name: dual_joint_position_relative, size: 14}
   - {name: dual_joint_velocity, size: 14}
   - {name: reach_center_position_in_base, size: 3}
   - {name: target_position_in_base, size: 3}
-  - {name: target_quaternion_wxyz, size: 4, fixed: [1.0, 0.0, 0.0, 0.0]}
+  - {name: target_quaternion_xyzw, size: 4, fixed: [0.0, 0.0, 0.0, 1.0]}
   - {name: previous_bounded_action, size: 14}
   - {name: zero_plate_forces, size: 2}
   - {name: zero_object_orientation, size: 4}

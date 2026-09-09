@@ -325,7 +325,7 @@ void PolicyControl::updateRateLimitedTarget(double period_s)
     }
 }
 
-bool PolicyControl::refreshIsaacRelativeTarget(std::string& error)
+void PolicyControl::refreshIsaacRelativeTarget()
 {
     const Eigen::Index offset =
         static_cast<Eigen::Index>(controlled_robot_index_ * FR3_DOF);
@@ -345,7 +345,6 @@ bool PolicyControl::refreshIsaacRelativeTarget(std::string& error)
         q_desired_(index) = target;
         qdot_desired_(index) = 0.0;
     }
-    return true;
 }
 
 void PolicyControl::writeIsaacEffortCommand(double period_s)
@@ -504,13 +503,7 @@ PolicyControl::ComputeResult PolicyControl::compute(
         //     q_desired = measured_q + held_offset
         // The PD torque and its 1 Nm/update torque-rate limit are also evaluated
         // every cycle; there is no separate 100 Hz torque gate or hold.
-        std::string error;
-        if (!refreshIsaacRelativeTarget(error))
-        {
-            result_message_ = error;
-            RCLCPP_ERROR(node_->get_logger(), "[%s] %s", name_.c_str(), error.c_str());
-            return ComputeResult::ABORTED;
-        }
+        refreshIsaacRelativeTarget();
         writeIsaacEffortCommand(period.seconds());
     }
     else

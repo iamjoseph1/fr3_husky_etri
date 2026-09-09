@@ -58,7 +58,7 @@ private:
     int resolveRobotIndex(const std::string& robot_name) const;
     bool validateTarget(const CommandData& command, std::string& error) const;
     void updateRateLimitedTarget(double period_s);
-    bool refreshIsaacRelativeTarget(std::string& error);
+    void refreshIsaacRelativeTarget();
     void writeDesiredCommand(const Eigen::VectorXd& q_desired, const Eigen::VectorXd& qdot_desired);
     void writeIsaacEffortCommand(double period_s);
 
