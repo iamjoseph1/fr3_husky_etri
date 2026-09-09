@@ -14,6 +14,7 @@ float64 joint_acceleration_scale
 # absolute target is refreshed from measured q, and the legacy trajectory
 # rate limiter above is bypassed.
 bool isaac_relative_control
+# Legacy API field; reach v2 always refreshes at the controller rate (1 kHz).
 float64 relative_target_refresh_hz
 bool control_gripper
 ---

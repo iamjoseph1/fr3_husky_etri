@@ -60,7 +60,7 @@ private:
     void updateRateLimitedTarget(double period_s);
     bool refreshIsaacRelativeTarget(std::string& error);
     void writeDesiredCommand(const Eigen::VectorXd& q_desired, const Eigen::VectorXd& qdot_desired);
-    void writeIsaacEffortCommand(bool update_effort);
+    void writeIsaacEffortCommand(double period_s);
 
     FR3ModelUpdater& fr3_model_updater_;
     rclcpp::Subscription<fr3_husky_msgs::msg::PolicyJointCommand>::SharedPtr command_sub_;
@@ -77,15 +77,12 @@ private:
     double joint_velocity_scale_{0.10};
     double joint_acceleration_scale_{0.20};
     bool isaac_relative_control_{false};
-    double relative_target_refresh_hz_{100.0};
     bool control_gripper_{true};
 
     double activation_time_s_{0.0};
     double last_command_time_s_{0.0};
     uint64_t last_sequence_{0};
     bool has_command_{false};
-    double next_relative_refresh_time_s_{0.0};
-    double next_effort_update_time_s_{0.0};
     int last_gripper_state_{-1};
     Eigen::VectorXd q_hold_;
     Eigen::VectorXd q_target_;
@@ -116,7 +113,6 @@ private:
     static constexpr std::array<double, FR3_DOF> kIsaacEffortLimits{
         87.0, 87.0, 87.0, 87.0, 12.0, 12.0, 12.0};
     static constexpr double kIsaacTorqueRateLimit = 1000.0;  // Nm/s
-    static constexpr double kIsaacEffortUpdatePeriodS = 0.01;  // 100 Hz
     static constexpr double kJointLimitMargin = 0.02;
     static constexpr double kPositionTolerance = 1.0e-6;
     static constexpr double kNominalControlPeriodS = 0.001;

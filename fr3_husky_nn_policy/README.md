@@ -18,7 +18,7 @@ to the robot. Their actuator-side execution modes are deliberately task-specific
 | Task | Streamed arm command | Controller execution |
 | --- | --- | --- |
 | LiftCube | Absolute `q + 0.1 * action` target | Existing 1 kHz velocity/acceleration/step-limited trajectory |
-| Reach | Relative `0.1 * action` offset | Compute `q_target = measured_q + offset` once per 20 Hz action, hold it, then Isaac-style effort PD |
+| Reach | Relative `0.1 * action` offset | Hold the offset for 50 ms; recompute `q_target = measured_q + offset` and Isaac-style PD torque every 1 kHz controller step |
 
 Reach uses the nominal training actuator values `Kp=80`, `Kd=4`, with effort
 limits of 87 Nm for joints 1-4 and 12 Nm for joints 5-7. This path bypasses the
@@ -50,8 +50,7 @@ actuator command smoothing is configured separately with
 `max_actuator_step_rad`, `joint_velocity_scale`, and
 `joint_acceleration_scale`. Reach does not use those three smoothing values;
 its legacy `relative_target_refresh_hz` parameter is retained for action API
-compatibility; targets are computed once per 20 Hz policy action by
-default.
+compatibility and is set to 1000 Hz. The controller no longer uses it as a gate.
 
 ### Shadow mode
 
@@ -119,9 +118,10 @@ The node-side `action_clip=1.0` remains a numerical safety guard.
 
 At each policy step the node publishes the 14 relative joint offsets rather
 than an absolute target. The controller holds that offset for the 50 ms policy
-interval. It recomputes the absolute target from the latest measured joint
-positions only when the next policy action arrives, then holds that target
-across the five 100 Hz Isaac physics substeps.
+interval. In reach v2, every 1 kHz controller cycle recomputes the target as
+the latest measured joint position plus the held offset, matching Isaac Lab's
+`RelativeJointPositionAction`, and then evaluates the PD torque and 1 Nm/update
+torque-rate limit. There is no separate 100 Hz torque gate or torque-hold stage.
 
 ### Inputs and services
 

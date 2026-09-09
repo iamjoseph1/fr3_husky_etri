@@ -139,15 +139,6 @@ bool PolicyControl::acceptGoal(const ActionT::Goal& goal)
                 name_.c_str());
             return false;
         }
-        if (!std::isfinite(goal.relative_target_refresh_hz) ||
-            goal.relative_target_refresh_hz <= 0.0 ||
-            goal.relative_target_refresh_hz > 1000.0)
-        {
-            RCLCPP_WARN(
-                node_->get_logger(), "[%s] relative_target_refresh_hz must be in (0, 1000]",
-                name_.c_str());
-            return false;
-        }
     }
     return true;
 }
@@ -165,7 +156,6 @@ void PolicyControl::onGoalAccepted(const ActionT::Goal& goal)
     joint_velocity_scale_ = goal.joint_velocity_scale;
     joint_acceleration_scale_ = goal.joint_acceleration_scale;
     isaac_relative_control_ = goal.isaac_relative_control;
-    relative_target_refresh_hz_ = goal.relative_target_refresh_hz;
     control_gripper_ = goal.control_gripper;
 }
 
@@ -179,8 +169,6 @@ void PolicyControl::onStart()
     q_offset_ = Eigen::VectorXd::Zero(model_updater_.manipulator_dof_);
     previous_applied_effort_ = Eigen::VectorXd::Zero(model_updater_.manipulator_dof_);
     activation_time_s_ = node_->now().seconds();
-    next_relative_refresh_time_s_ = activation_time_s_;
-    next_effort_update_time_s_ = activation_time_s_;
     last_command_time_s_ = activation_time_s_;
     last_sequence_ = 0;
     has_command_ = false;
@@ -191,11 +179,11 @@ void PolicyControl::onStart()
         node_->get_logger(),
         "[%s] started robot=%s timeout=%.3fs max_duration=%.3fs "
         "policy_delta=%.3frad actuator_step=%.4frad velocity_scale=%.2f "
-        "acceleration_scale=%.2f mode=%s relative_refresh=%.1fHz gripper=%s",
+        "acceleration_scale=%.2f mode=%s relative_update=%s gripper=%s",
         name_.c_str(), controlled_robot_.c_str(), command_timeout_s_, max_duration_s_,
         max_policy_target_delta_rad_, max_actuator_step_rad_, joint_velocity_scale_,
         joint_acceleration_scale_, isaac_relative_control_ ? "isaac-relative" : "rate-limited-absolute",
-        isaac_relative_control_ ? relative_target_refresh_hz_ : 0.0,
+        isaac_relative_control_ ? "controller-rate" : "n/a",
         control_gripper_ ? "true" : "false");
 }
 
@@ -360,15 +348,16 @@ bool PolicyControl::refreshIsaacRelativeTarget(std::string& error)
     return true;
 }
 
-void PolicyControl::writeIsaacEffortCommand(bool update_effort)
+void PolicyControl::writeIsaacEffortCommand(double period_s)
 {
     fr3_model_updater_.torque_desired_total_.setZero();
-    if (!update_effort)
+    if (!std::isfinite(period_s) || period_s <= 0.0)
     {
-        fr3_model_updater_.torque_desired_total_ = previous_applied_effort_;
-        fr3_model_updater_.writeCommand(fr3_model_updater_.torque_desired_total_);
-        return;
+        period_s = kNominalControlPeriodS;
     }
+    // A late controller cycle must not relax the 1 Nm/update safety bound.
+    period_s = std::min(period_s, kMaxLimiterPeriodS);
+
     const Eigen::Index offset =
         static_cast<Eigen::Index>(controlled_robot_index_ * FR3_DOF);
     for (size_t i = 0; i < controlled_dof_; ++i)
@@ -384,12 +373,11 @@ void PolicyControl::writeIsaacEffortCommand(bool update_effort)
             effort,
             -kIsaacEffortLimits[joint_index],
             kIsaacEffortLimits[joint_index]);
-        // Isaac Lab v1 applies torque magnitude limiting followed by a
+        // Isaac Lab reach v2 applies torque magnitude limiting followed by a
         // 1000 Nm/s torque-rate limiter.  Apply the same continuous-time
-        // limit here; at the normal 1 kHz controller period this is 1 Nm per
-        // update, equivalent to 10 Nm per 100 Hz actuator step.
+        // limit here; at the normal 1 kHz controller period this is 1 Nm per update.
         const double max_effort_step =
-            kIsaacTorqueRateLimit * kIsaacEffortUpdatePeriodS;
+            kIsaacTorqueRateLimit * period_s;
         const double previous = previous_applied_effort_(index);
         const double applied_effort = previous + std::clamp(
             magnitude_limited_effort - previous,
@@ -458,22 +446,14 @@ PolicyControl::ComputeResult PolicyControl::compute(
             const Eigen::Index index = offset + static_cast<Eigen::Index>(i);
             if (isaac_relative_control_)
             {
+                // Keep the processed offset unchanged until the next 20 Hz
+                // policy command. Every 1 kHz control step adds it to the
+                // latest measured position.
                 q_offset_(index) = command->target_positions[i];
             }
             else
             {
                 q_target_(index) = command->target_positions[i];
-            }
-        }
-        if (isaac_relative_control_)
-        {
-            // Isaac Lab processes the relative offset once per policy action
-            // and holds the resulting absolute target for all substeps.
-            if (!refreshIsaacRelativeTarget(error))
-            {
-                result_message_ = error;
-                RCLCPP_ERROR(node_->get_logger(), "[%s] %s", name_.c_str(), error.c_str());
-                return ComputeResult::ABORTED;
             }
         }
         last_sequence_ = command->sequence;
@@ -519,18 +499,19 @@ PolicyControl::ComputeResult PolicyControl::compute(
 
     if (isaac_relative_control_)
     {
-        // Hold q_desired_ until the next policy action. Recomputing
-        // measured_q + offset at 100 Hz is not Isaac Lab semantics.
-        const bool update_effort = now_s >= next_effort_update_time_s_;
-        if (update_effort)
+        // Hold the 20 Hz policy offset, but reproduce Isaac Lab's
+        // RelativeJointPositionAction at every 1 kHz controller update:
+        //     q_desired = measured_q + held_offset
+        // The PD torque and its 1 Nm/update torque-rate limit are also evaluated
+        // every cycle; there is no separate 100 Hz torque gate or hold.
+        std::string error;
+        if (!refreshIsaacRelativeTarget(error))
         {
-            do
-            {
-                next_effort_update_time_s_ += kIsaacEffortUpdatePeriodS;
-            }
-            while (next_effort_update_time_s_ <= now_s);
+            result_message_ = error;
+            RCLCPP_ERROR(node_->get_logger(), "[%s] %s", name_.c_str(), error.c_str());
+            return ComputeResult::ABORTED;
         }
-        writeIsaacEffortCommand(update_effort);
+        writeIsaacEffortCommand(period.seconds());
     }
     else
     {

@@ -61,7 +61,9 @@ class PPOReachPolicyNode(Node):
         self.declare_parameter("max_actuator_step_rad", 0.001)
         self.declare_parameter("joint_velocity_scale", 0.10)
         self.declare_parameter("joint_acceleration_scale", 0.20)
-        self.declare_parameter("relative_target_refresh_hz", 100.0)
+        # Kept in the action goal for compatibility. The v2 controller updates
+        # the relative target and effort every 1 kHz controller cycle.
+        self.declare_parameter("relative_target_refresh_hz", 1000.0)
         self.declare_parameter("joint_limit_margin_rad", 0.02)
         self.declare_parameter("ready_tolerance_rad", 0.20)
         self.declare_parameter("shadow_mode", True)
@@ -496,7 +498,7 @@ class PPOReachPolicyNode(Node):
 
         # Keep the learned policy goal/action semantics, but project the
         # real-robot reference into a small safe band at the joint limits.
-        # The controller applies the same projection at its 100 Hz refresh,
+        # The controller applies the same projection at every 1 kHz update,
         # so this does not terminate the policy when a joint reaches a limit.
         margin = float(self.get_parameter("joint_limit_margin_rad").value)
         safe_lower = LOWER_LIMITS + margin
@@ -523,9 +525,9 @@ class PPOReachPolicyNode(Node):
         command.header.frame_id = self.base_frame
         command.sequence = self.sequence
         command.robot_name = "dual"
-        # Isaac Lab's RelativeJointPositionAction keeps the processed offset
-        # Hold this processed offset for one policy step; the controller turns
-        # it into one absolute q_target and holds that target across substeps.
+        # Hold this processed offset for one 20 Hz policy step. The controller
+        # adds it to the latest measured position at each 1 kHz PD update,
+        # matching Isaac Lab's RelativeJointPositionAction.apply_actions().
         command.target_positions = delta.tolist()
         command.relative_position_offsets = True
         command.gripper_action = 0.0
