@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="utf-8"?>
+<robot xmlns:xacro="http://www.ros.org/wiki/xacro">
+    <!--
+      Flat plate used by the Isaac reach task.
+
+      The mesh origin is the FR3 flange/link8 mounting surface and the mesh
+      extends 25 mm along +Z.  The plate is deliberately massless here: the
+      source Isaac plate prim has visual/collision geometry but no authored
+      mass or density.  Dynamic inertia matching is handled separately.
+    -->
+    <xacro:macro name="plate_ee" params="prefix parent">
+        <link name="${prefix}_plate_ee">
+            <visual>
+                <origin xyz="0 0 0" rpy="0 0 0"/>
+                <geometry>
+                    <mesh filename="package://fr3_husky_description/meshes/plate_ee_140x140x25.stl"
+                          scale="0.001 0.001 0.001"/>
+                </geometry>
+                <material name="plate_ee_aluminum">
+                    <color rgba="0.72 0.74 0.78 1.0"/>
+                </material>
+            </visual>
+            <!-- Isaac plate_ee_140x140x25.usd uses a box collider. -->
+            <collision>
+                <origin xyz="0 0 0.0125" rpy="0 0 0"/>
+                <geometry>
+                    <box size="0.14 0.14 0.025"/>
+                </geometry>
+            </collision>
+        </link>
+
+        <joint name="${prefix}_plate_ee_joint" type="fixed">
+            <parent link="${parent}"/>
+            <child link="${prefix}_plate_ee"/>
+            <!-- Matches the plate transform authored in dual_fr3_plate_ee.usd. -->
+            <origin xyz="0 0 0" rpy="0 0 ${3.0 * pi / 4.0}"/>
+        </joint>
+    </xacro:macro>
+</robot>

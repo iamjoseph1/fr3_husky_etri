@@ -3,6 +3,7 @@
     <xacro:include filename="$(find franka_description)/robots/common/franka_multi_robot.xacro"/>
     <xacro:include filename="$(find fr3_husky_description)/robots/realsense_d435i.urdf.xacro"/>
     <xacro:include filename="$(find fr3_husky_description)/robots/azure_kinect.urdf.xacro"/>
+    <xacro:include filename="$(find fr3_husky_description)/robots/plate_ee.urdf.xacro"/>
 
     <!-- base xacro includes -->
     <xacro:include filename="$(find fr3_husky_description)/robots/box_base.xacro"/>
@@ -151,5 +152,12 @@
         connected_to="tmp_base"
         fix_finger="$(arg fix_finger)"
     />
+
+    <!-- The reach policy is launched with hand=false; mount the same flat
+         plate geometry used by the Isaac reach asset in that configuration. -->
+    <xacro:unless value="$(arg hand)">
+        <xacro:plate_ee prefix="left_fr3" parent="left_fr3_link8"/>
+        <xacro:plate_ee prefix="right_fr3" parent="right_fr3_link8"/>
+    </xacro:unless>
 
 </robot>

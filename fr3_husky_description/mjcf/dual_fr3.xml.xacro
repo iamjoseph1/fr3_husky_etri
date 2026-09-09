@@ -23,6 +23,7 @@
     <xacro:include filename="$(find fr3_husky_description)/mjcf/azure_kinect.xml.xacro"/>
     <xacro:include filename="$(find fr3_husky_description)/mjcf/assets/d435i_assets.xml.xacro"/>
     <xacro:include filename="$(find fr3_husky_description)/mjcf/assets/azure_kinect_assets.xml.xacro"/>
+    <xacro:include filename="$(find fr3_husky_description)/mjcf/plate_ee.xml.xacro"/>
 
     <!-- ============================================================= -->
     <!-- Should an end-effector be mounted at the flange? -->
@@ -62,6 +63,15 @@
 
     <xacro:arg name="control_mode" default="effort" />
 
+    <!-- The reach launch uses hand=false. In that configuration use the
+         effective link7 inertia from Isaac's dual_fr3_plate_ee.usd. -->
+    <xacro:property name="standard_fr3_inertials"
+                    value="${xacro.load_yaml('$(find franka_description)/mjcf/robots/fr3/inertials.yaml')}" />
+    <xacro:property name="isaac_reach_fr3_inertials"
+                    value="${xacro.load_yaml('$(find fr3_husky_description)/config/fr3_isaac_reach_inertials.yaml')}" />
+    <xacro:property name="fr3_arm_inertials"
+                    value="${standard_fr3_inertials if '$(arg hand)' == 'true' else isaac_reach_fr3_inertials}" />
+
     <xacro:property name="ee2cam_left_tf"
                     value="${xacro.load_yaml('$(find fr3_husky_description)/config/TF_ee2cam_left.yaml')}" />
     <xacro:property name="ee2cam_right_tf"
@@ -80,7 +90,7 @@
             rpy="${rpy}"
             joint_limits="${xacro.load_yaml('$(find franka_description)/mjcf/robots/fr3/joint_limits.yaml')}"
             kinematics="${xacro.load_yaml('$(find franka_description)/mjcf/robots/fr3/kinematics.yaml')}"
-            inertials="${xacro.load_yaml('$(find franka_description)/mjcf/robots/fr3/inertials.yaml')}"
+            inertials="${fr3_arm_inertials}"
             dynamics="${xacro.load_yaml('$(find franka_description)/mjcf/robots/fr3/dynamics.yaml')}"
             accelerometer_config="${xacro.load_yaml('$(find franka_description)/mjcf/robots/fr3/accelerometers.yaml')}"
             hand="$(arg hand)"
@@ -110,6 +120,9 @@
             hand_vis_mesh_materials="['off_white','black','black','white','off_white']"
             finger_vis_mesh_materials="['off_white','black']">
             <cam_body>
+                <xacro:unless value="$(arg hand)">
+                    <xacro:plate_ee_mjcf prefix="${arm_prefix}_fr3"/>
+                </xacro:unless>
                 <xacro:if value="$(arg with_realsense)">
                     <xacro:realsense_d435i_mjcf prefix="${arm_prefix}" ee2cam_tf="${ee2cam_tf}"
                         color_width="$(arg d435i_color_width)"
@@ -125,7 +138,8 @@
     <compiler angle="radian" autolimits="true" />
 
     <!-- ── Option ── -->
-    <option timestep="0.001" integrator="implicitfast" />
+    <!-- Match dual_fr3_lab Reach v2, where gravity is disabled for the robot. -->
+    <option timestep="0.001" integrator="implicitfast" gravity="0 0 0" />
 
     <!-- ── Visual ── -->
     <visual>
@@ -170,6 +184,7 @@
         <xacro:franka_hand_assets/>
         <xacro:husky_assets/>
         <xacro:roas_structure_assets/>
+        <xacro:plate_ee_mjcf_assets/>
         <xacro:if value="$(arg with_realsense)">
             <xacro:d435i_assets/>
         </xacro:if>

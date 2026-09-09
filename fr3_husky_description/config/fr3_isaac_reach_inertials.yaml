@@ -1,0 +1,76 @@
+# Effective inertials used by Isaac's dual_fr3_plate_ee.usd reach asset.
+#
+# Links 1-6 retain the standard MuJoCo FR3 values. The fixed hand inertial in
+# the source URDF was merged into link7 by the Isaac importer. The plate prim
+# itself has no mass/density. Link7 below is the final valid mass, COM,
+# principal-axis orientation and diagonal inertia read from that USD.
+
+link1:
+  origin:
+    xyz: 4.128e-07 -0.0181251 -0.0386036
+    quat: 0.998098 -0.0605364 0.00380499 0.0110109
+  mass: 2.92747
+  diaginertia:
+    xx: 0.0239286
+    yy: 0.0227246
+    zz: 0.00610634
+
+link2:
+  origin:
+    xyz: 0.00318289 -0.0743222 0.00881461
+    quat: 0.502599 0.584437 -0.465998 0.434366
+  mass: 2.93554
+  diaginertia:
+    xx: 0.0629567
+    yy: 0.0411924
+    zz: 0.0246371
+
+link3:
+  origin:
+    xyz: 0.0407016 -0.00482006 -0.0289731
+    quat: 0.921025 -0.244161 0.155272 0.260745
+  mass: 2.2449
+  diaginertia:
+    xx: 0.0267409
+    yy: 0.0189869
+    zz: 0.0171587
+
+link4:
+  origin:
+    xyz: -0.0459101 0.0630493 -0.00851879
+    quat: 0.438018 0.803311 0.00937812 0.403414
+  mass: 2.6156
+  diaginertia:
+    xx: 0.05139
+    yy: 0.0372717
+    zz: 0.0160047
+
+link5:
+  origin:
+    xyz: -0.00160396 0.0292536 -0.0972966
+    quat: 0.919031 0.125604 0.0751531 -0.366003
+  mass: 2.32712
+  diaginertia:
+    xx: 0.0579335
+    yy: 0.0449144
+    zz: 0.0130634
+
+link6:
+  origin:
+    xyz: 0.0597131 -0.0410295 -0.0101693
+    quat: 0.621301 0.552665 0.510011 0.220081
+  mass: 1.81704
+  diaginertia:
+    xx: 0.0175039
+    yy: 0.0161123
+    zz: 0.00193529
+
+link7:
+  origin:
+    xyz: -0.0017135795 0.0077896994 0.06622239
+    quat: 0.9281723 0.03080575 -0.037970595 -0.3689249
+  mass: 1.3571432828903198
+  diaginertia:
+    xx: 0.009177122
+    yy: 0.008399624
+    zz: 0.0017407906

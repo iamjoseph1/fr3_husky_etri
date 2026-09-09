@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="utf-8"?>
+<mujoco xmlns:xacro="http://www.ros.org/wiki/xacro">
+    <!-- Shared asset declaration for the two plate end-effectors. -->
+    <xacro:macro name="plate_ee_mjcf_assets" params="">
+        <mesh name="plate_ee_140x140x25"
+              file="$(find fr3_husky_description)/meshes/plate_ee_140x140x25.stl"
+              scale="0.001 0.001 0.001"/>
+    </xacro:macro>
+
+    <!--
+      Inserted directly into the FR3 link8 body. Both geoms have zero mass,
+      matching the current Isaac plate prim. The effective merged EE inertia
+      is applied to link7 through fr3_isaac_reach_inertials.yaml.
+    -->
+    <xacro:macro name="plate_ee_mjcf" params="prefix">
+        <geom name="${prefix}_plate_ee_visual"
+              class="visual"
+              type="mesh"
+              mesh="plate_ee_140x140x25"
+              euler="0 0 ${3.0 * pi / 4.0}"
+              rgba="0.72 0.74 0.78 1.0"
+              mass="0" density="0"/>
+        <!-- Isaac uses a 140 x 140 x 25 mm box collider for this plate. -->
+        <geom name="${prefix}_plate_ee_collision"
+              class="collision"
+              type="box"
+              pos="0 0 0.0125"
+              euler="0 0 ${3.0 * pi / 4.0}"
+              size="0.07 0.07 0.0125"
+              mass="0" density="0"/>
+        <site name="${prefix}_plate_ee_tcp" pos="0 0 0.025"/>
+    </xacro:macro>
+</mujoco>
