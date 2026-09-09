@@ -123,6 +123,41 @@ the latest measured joint position plus the held offset, matching Isaac Lab's
 `RelativeJointPositionAction`, and then evaluates the PD torque and 1 Nm/update
 torque-rate limit. There is no separate 100 Hz torque gate or torque-hold stage.
 
+### Reach v2 MuJoCo deployment alignment
+
+The following settings make the Reach v2 MuJoCo inference path consistent with
+the Isaac Lab training interface:
+
+- **Observation/model:** use the Reach v2 `58 -> 14` policy and Isaac Lab 3.0's
+  `xyzw` quaternion convention (`[0, 0, 0, 1]` for the fixed base). The
+  previous-action observation remains zero until an explicit `start_policy`
+  request is accepted.
+- **Action timing:** run policy inference at 20 Hz, hold the resulting joint
+  offset for 50 ms, and recompute `q_desired = q_measured + held_offset` on
+  every 1 kHz controller update. There is no additional 100 Hz effort hold.
+- **Effort control:** use direct PD control with `Kp=80`, `Kd=4`, effort limits
+  of `87 Nm` for joints 1--4 and `12 Nm` for joints 5--7, and a torque-rate
+  limit of `1000 Nm/s` (`1 Nm` per 1 ms update).
+- **MuJoCo plant:** use `timestep=0.001`, `implicitfast`, zero gravity, the
+  Isaac Reach plate/link inertias, and the arm dynamics values
+  `armature=0.1`, `damping=0.003`, and `frictionloss=0.2`.
+- **Target and state frames:** interpret `/reach_target_pose` XYZ in the
+  `base` frame, convert it to MuJoCo world coordinates only for visualization,
+  and apply the per-arm Y offsets (`+0.2 m` left, `-0.2 m` right) exactly once.
+  The policy and logger use the same TCP definition: `link7` plus a local
+  `[0, 0, 0.132] m` offset.
+- **ROS/MoveIt:** consume the valid arm state directly from
+  `/dual_fr3/joint_states`; avoid a duplicate joint-state publisher, and allow
+  the camera/plate contact pairs that are fixed parts of the same end-effector
+  assembly so that ready-pose planning is not rejected as a start collision.
+
+Validated MuJoCo run `20260909_191258_839088_KST` reached both commanded target
+centres. Over each target's final 2 seconds, the mean left/right TCP errors were
+`0.41/0.49 mm` at `(0.5, 0.0, 0.3) m` and `3.62/4.25 mm` at
+`(0.4, 0.0, 0.1) m`. The final action standard deviation averaged
+`8.3e-4`, with mean absolute joint velocity `3.9e-4 rad/s`, indicating stable
+convergence rather than the earlier oscillatory behavior.
+
 ### Inputs and services
 
 - Target center: /reach_target_pose (geometry_msgs/PoseStamped, base frame)
