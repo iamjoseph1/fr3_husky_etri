@@ -39,8 +39,10 @@ ppo_reach_policy_node:
     target_min: [0.40, -0.10, 0.10]
     target_max: [0.60, 0.10, 0.35]
 
-    # Start recording on a successful start_policy request. An empty log_root
-    # writes to fr3_husky_nn_policy/log/dual_fr3_reach/<start time>/.
+    # Start recording when start_policy requests policy execution. An empty
+    # log_root writes under fr3_husky_nn_policy/log. The Reach launch overrides
+    # log_task_name to dual_fr3_reach for MuJoCo and dual_fr3_reach_real for
+    # real hardware.
     log_root: ""
     log_task_name: dual_fr3_reach
     # Match the Isaac Lab reach reward: link7 + 0.132 m local Z, with the two

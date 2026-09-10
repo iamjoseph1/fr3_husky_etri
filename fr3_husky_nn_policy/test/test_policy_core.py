@@ -120,15 +120,23 @@ def test_reach_observation_layout():
 
 
 def test_reach_deployed_model_metadata():
-    model_path = (
-        Path(__file__).parents[1] / "models" / "dual_fr3_reach_actor.npz"
-    )
-    actor = NumpyMLPActor(model_path)
-    assert actor.input_dim == 58
-    assert actor.output_dim == 14
-    assert actor.format_version == 2
-    assert actor.output_activation == "tanh"
-    assert (
-        actor.source_sha256
-        == "150eac1b3014b8e1f172809cc81c618a90f2c976abd6def7c6cc7d3c5e5188cc"
-    )
+    expected_models = {
+        "dual_fr3_reach_actor_friction_w_1000hz.npz": (
+            "150eac1b3014b8e1f172809cc81c618a90f2c976abd6def7c6cc7d3c5e5188cc"
+        ),
+        "dual_fr3_reach_actor_friction_w_100hz.npz": (
+            "8954c5b977cce74cf854fcf76074ddc2110e8c8e2ff74c27ded68083ddcbbe19"
+        ),
+        "dual_fr3_reach_actor_no_friction_w_100hz.npz": (
+            "e74393b2f4013cf044ba3b4bbb5fe56852565ef0a4930d918eb78de2aa937636"
+        ),
+    }
+
+    model_dir = Path(__file__).parents[1] / "models"
+    for model_name, source_sha256 in expected_models.items():
+        actor = NumpyMLPActor(model_dir / model_name)
+        assert actor.input_dim == 58
+        assert actor.output_dim == 14
+        assert actor.format_version == 2
+        assert actor.output_activation == "tanh"
+        assert actor.source_sha256 == source_sha256

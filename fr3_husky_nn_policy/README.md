@@ -223,12 +223,15 @@ ros2 service call /ppo_reach_policy_node/stop_policy std_srvs/srv/Trigger {}
 
 ### Reach trajectory log
 
-A successful `start_policy` request starts a 20 Hz trajectory log. On launch
-shutdown, the node writes the CSV data, metadata, and four PNG plots below:
+A successful `start_policy` request starts a 20 Hz trajectory log. MuJoCo runs
+are stored below `log/dual_fr3_reach`, while real-hardware runs are stored below
+`log/dual_fr3_reach_real`. On launch shutdown, both modes write the same CSV
+data, metadata, and four PNG plots below:
 
 ~~~text
-fr3_husky_nn_policy/log/dual_fr3_reach/<start time>/
+fr3_husky_nn_policy/log/<dual_fr3_reach|dual_fr3_reach_real>/<start time>/
 ├── eef_trajectory.csv
+├── policy_trace.csv
 ├── metadata.json
 ├── eef_x_vs_target.png
 ├── eef_y_vs_target.png

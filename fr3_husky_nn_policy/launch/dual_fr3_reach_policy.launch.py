@@ -1,7 +1,7 @@
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription
 from launch.launch_description_sources import PythonLaunchDescriptionSource
-from launch.substitutions import LaunchConfiguration, PathJoinSubstitution
+from launch.substitutions import LaunchConfiguration, PathJoinSubstitution, PythonExpression
 from launch_ros.actions import Node
 from launch_ros.substitutions import FindPackageShare
 
@@ -38,6 +38,15 @@ def generate_launch_description():
                 "model_path": LaunchConfiguration("model_path"),
                 "shadow_mode": LaunchConfiguration("shadow_mode"),
                 "auto_start": LaunchConfiguration("auto_start"),
+                # Keep simulation and real-robot runs separate while using the
+                # exact same ReachRunLogger fields and plots for both.
+                "log_task_name": PythonExpression(
+                    [
+                        "'dual_fr3_reach' if '",
+                        LaunchConfiguration("use_mujoco"),
+                        "'.lower() == 'true' else 'dual_fr3_reach_real'",
+                    ]
+                ),
             },
         ],
     )
