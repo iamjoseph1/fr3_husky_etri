@@ -54,7 +54,7 @@ def generate_launch_description():
             DeclareLaunchArgument(
                 "model_path",
                 default_value=PathJoinSubstitution(
-                    [policy_share, "models", "dual_fr3_reach_actor.npz"]
+                    [policy_share, "models", "dual_fr3_reach_actor_friction_w_1000hz.npz"]
                 ),
             ),
             controller,
