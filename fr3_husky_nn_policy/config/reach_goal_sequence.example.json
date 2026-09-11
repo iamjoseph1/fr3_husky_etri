@@ -1,0 +1,24 @@
+{
+  "goals": [
+    {
+      "label": "center_low",
+      "position": [0.5, 0.0, 0.2],
+      "duration_s": 4.0
+    },
+    {
+      "label": "left_near",
+      "position": [0.4, 0.0, 0.2],
+      "duration_s": 4.0
+    },
+    {
+      "label": "right_far",
+      "position": [0.6, 0.0, 0.3],
+      "duration_s": 4.0
+    },
+    {
+      "label": "center_high",
+      "position": [0.5, 0.0, 0.3],
+      "duration_s": 4.0
+    }
+  ]
+}

@@ -1,6 +1,7 @@
 from pathlib import Path
 
 import numpy as np
+import pytest
 
 from fr3_husky_nn_policy.numpy_actor import NumpyMLPActor
 from fr3_husky_nn_policy.observation import (
@@ -9,6 +10,27 @@ from fr3_husky_nn_policy.observation import (
     build_liftcube_observation,
     build_reach_observation,
 )
+from fr3_husky_nn_policy.reach_goal_sequence import load_reach_goal_sequence
+
+
+def test_load_reach_goal_sequence_uses_dual_fr3_lab_format(tmp_path):
+    sequence_path = tmp_path / "goals.json"
+    sequence_path.write_text(
+        '{"goals": [{"label": "one", "position": [0.5, 0, 0.2], '
+        '"duration_s": 4.0}]}'
+    )
+
+    assert load_reach_goal_sequence(str(sequence_path)) == [
+        {"label": "one", "position": [0.5, 0.0, 0.2], "duration_s": 4.0}
+    ]
+
+
+def test_load_reach_goal_sequence_rejects_invalid_duration(tmp_path):
+    sequence_path = tmp_path / "goals.json"
+    sequence_path.write_text('[{"position": [0.5, 0.0, 0.2], "duration_s": 0}]')
+
+    with pytest.raises(ValueError, match="duration_s"):
+        load_reach_goal_sequence(str(sequence_path))
 
 
 def test_numpy_actor_elu(tmp_path):

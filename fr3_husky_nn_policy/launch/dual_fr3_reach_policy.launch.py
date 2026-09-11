@@ -38,6 +38,10 @@ def generate_launch_description():
                 "model_path": LaunchConfiguration("model_path"),
                 "shadow_mode": LaunchConfiguration("shadow_mode"),
                 "auto_start": LaunchConfiguration("auto_start"),
+                "reach_goal_sequence": LaunchConfiguration("reach_goal_sequence"),
+                "reach_goal_sequence_loop": LaunchConfiguration(
+                    "reach_goal_sequence_loop"
+                ),
                 # Keep simulation and real-robot runs separate while using the
                 # exact same ReachRunLogger fields and plots for both.
                 "log_task_name": PythonExpression(
@@ -60,6 +64,8 @@ def generate_launch_description():
             DeclareLaunchArgument("launch_move_group", default_value="false"),
             DeclareLaunchArgument("shadow_mode", default_value="true"),
             DeclareLaunchArgument("auto_start", default_value="false"),
+            DeclareLaunchArgument("reach_goal_sequence", default_value=""),
+            DeclareLaunchArgument("reach_goal_sequence_loop", default_value="false"),
             DeclareLaunchArgument(
                 "model_path",
                 default_value=PathJoinSubstitution(

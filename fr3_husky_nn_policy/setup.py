@@ -10,7 +10,10 @@ setup(
     data_files=[
         ("share/ament_index/resource_index/packages", ["resource/" + package_name]),
         ("share/" + package_name, ["package.xml"]),
-        ("share/" + package_name + "/config", glob("config/*.yaml")),
+        (
+            "share/" + package_name + "/config",
+            glob("config/*.yaml") + glob("config/*.json"),
+        ),
         ("share/" + package_name + "/launch", glob("launch/*.launch.py")),
         ("share/" + package_name + "/models", glob("models/*.npz") + glob("models/*.yaml")),
     ],
@@ -24,6 +27,7 @@ setup(
         "console_scripts": [
             "ppo_liftcube_policy_node = fr3_husky_nn_policy.ppo_liftcube_policy_node:main",
             "ppo_reach_policy_node = fr3_husky_nn_policy.ppo_reach_policy_node:main",
+            "fr3_sysid_probe_node = fr3_husky_nn_policy.fr3_sysid_probe_node:main",
             "reach_target_cli = fr3_husky_nn_policy.reach_target_cli:main",
             "export_ppo_actor = fr3_husky_nn_policy.export_ppo_actor:main",
         ],

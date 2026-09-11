@@ -165,6 +165,27 @@ convergence rather than the earlier oscillatory behavior.
 - Start: /ppo_reach_policy_node/start_policy
 - Stop: /ppo_reach_policy_node/stop_policy
 
+### Timed goal sequence
+
+Set `reach_goal_sequence` to a JSON file using the same `goals` format as
+`dual_fr3_lab/config/reach_goal_sequence.example.json`. The packaged example is
+`config/reach_goal_sequence.example.json`. The first target is applied when
+`start_policy`'s controller action is accepted, and later targets switch on a
+monotonic clock after each preceding `duration_s`; timer jitter therefore does
+not accumulate. External `/reach_target_pose` messages are ignored while the
+sequence owns the target.
+
+By default, the node cancels the policy after the final duration. Set
+`reach_goal_sequence_loop:=true` to repeat from the first target instead.
+
+~~~bash
+ros2 launch fr3_husky_nn_policy dual_fr3_reach_policy.launch.py \
+  shadow_mode:=false auto_start:=false \
+  reach_goal_sequence:="$(ros2 pkg prefix fr3_husky_nn_policy)/share/fr3_husky_nn_policy/config/reach_goal_sequence.example.json"
+
+ros2 service call /ppo_reach_policy_node/start_policy std_srvs/srv/Trigger {}
+~~~
+
 The target must remain inside the training range:
 
 | Axis | Minimum | Maximum |

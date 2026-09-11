@@ -33,6 +33,11 @@ ppo_reach_policy_node:
     # Safe defaults: inference runs, but no command is published.
     shadow_mode: true
     auto_start: false
+    # Optional JSON sequence in dual_fr3_lab's format. Its first target is
+    # applied when start_policy is accepted; each duration is measured from
+    # that instant. An empty value keeps interactive target behavior.
+    reach_goal_sequence: ""
+    reach_goal_sequence_loop: false
 
     # All positions are relative to the robot base frame, as in training.
     target_position: [0.50, 0.00, 0.20]
