@@ -24,6 +24,7 @@ def test_reach_run_logger_writes_csv_metadata_and_four_plots(tmp_path):
         robot_root_offset_xyz=np.asarray([0.0, 0.0, 0.405]),
         reach_offset_y=0.20,
         sample_rate_hz=20.0,
+        run_context={"command_source": "trajectory", "trajectory_rows": 2},
     )
     logger.append(
         elapsed_s=0.0,
@@ -56,3 +57,7 @@ def test_reach_run_logger_writes_csv_metadata_and_four_plots(tmp_path):
     assert metadata["sample_count"] == 2
     assert metadata["eef_local_offset_xyz_m"] == [0.0, 0.0, 0.132]
     assert metadata["per_arm_target_offset_y_m"] == 0.20
+    assert metadata["run_context"] == {
+        "command_source": "trajectory",
+        "trajectory_rows": 2,
+    }
