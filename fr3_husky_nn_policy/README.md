@@ -18,13 +18,14 @@
 | 작업 | 스트리밍하는 팔 명령 | 컨트롤러 실행 방식 |
 | --- | --- | --- |
 | LiftCube | 절대 `q + 0.1 * action` 목표 | 기존의 1 kHz 속도·가속도·스텝 제한 궤적 |
-| Reach | 상대 `0.1 * action` offset | offset을 50 ms 동안 유지하고, 매 1 kHz 컨트롤러 주기마다 `q_target = measured_q + offset` 및 Isaac 방식 PD torque를 다시 계산 |
+| Reach (`physics_step`) | 상대 `0.1 * action` offset | offset을 50 ms 동안 유지하고, 매 컨트롤러 주기마다 `q_target = measured_q + offset`을 다시 계산 |
+| Reach (`policy_step`) | 정책 시점의 절대 `measured_q + 0.1 * action` 목표 | 계산한 절대 목표를 다음 20 Hz 정책 시점까지 유지 |
 
 Reach는 학습에 사용한 공칭 액추에이터 값 `Kp=80`, `Kd=4`를 사용하며, 관절
-1--4의 effort 한계는 87 Nm, 관절 5--7의 한계는 12 Nm입니다. 이 경로는 Isaac
-Lab의 `RelativeJointPositionAction` substep 동작을 보존하기 위해 기존 궤적
-limiter를 우회합니다. timeout, 유한값, 관절 한계, 최대 정책 offset 검증은
-계속 적용됩니다.
+1--4의 effort 한계는 87 Nm, 관절 5--7의 한계는 12 Nm입니다. 두 모드 모두 기존
+궤적 limiter를 우회하고 컨트롤러 update마다 같은 PD, effort limit 및
+`1000 Nm/s` torque-rate limit을 적용합니다. timeout, 유한값, 관절 한계, 최대
+정책 offset 검증도 동일하게 유지됩니다.
 
 ## 빌드
 
@@ -48,9 +49,9 @@ source install/setup.bash
 정책 목표 검증에는 `max_policy_target_delta_rad`를 사용합니다. LiftCube의
 액추에이터 명령 smoothing은 `max_actuator_step_rad`, `joint_velocity_scale`,
 `joint_acceleration_scale`로 각각 설정합니다. Reach는 이 세 smoothing 값을
-사용하지 않습니다. 기존 `relative_target_refresh_hz` 파라미터는 action API
-호환성을 위해 남아 있으며 1000 Hz로 설정되지만, 컨트롤러는 더 이상 이를 gate로
-사용하지 않습니다.
+사용하지 않습니다. Reach의 목표 갱신 기준은 `reach_policy_step_action`으로
+선택합니다. 기존 `relative_target_refresh_hz` 파라미터는 action API 호환성을
+위해 남아 있지만, 컨트롤러는 더 이상 이를 gate로 사용하지 않습니다.
 
 ### Shadow mode
 
@@ -103,23 +104,49 @@ Reach는 14개 팔 관절 전체를 제어합니다. 물체 자세, 카메라, A
 그리퍼가 필요하지 않습니다. 사용자가 로봇 base frame에서 목표 중심을 입력하면,
 정책은 그 중심의 양쪽 0.20 m 지점에 해당하는 목표로 두 end effector를 이동시킵니다.
 
-- 모델: models/dual_fr3_reach_actor.npz
+- 기본 모델: models/dual_fr3_reach_actor_friction_w_1000hz.npz
 - 네트워크: 58 → 256 → 128 → 64 → 14
 - 결정론적 출력: tanh(마지막 선형 계층), float32 범위 `[-1, 1]`
 - Launch: dual_fr3_reach_policy.launch.py
 - 노드: ppo_reach_policy_node
+
+`reach_policy_step_action`은 action semantic만 선택하며 모델 파일을 자동으로 바꾸지
+않습니다. 100 Hz/1000 Hz 및 matched/unmatched 조건에 맞는 actor는 `model_path`로
+별도 지정해야 합니다. 패키지의 기존 actor를 사용할 때는 기본값인
+`reach_policy_step_action:=false`를 유지하고, policy-step으로 새로 학습·export한
+actor에만 `true`를 사용하세요.
 
 배포 모델은 `dual_fr3_reach_sim2real_v2/2026-09-09_11-05-39/model_4999.pt`에서
 내보낸 것입니다. NPZ에는 `output_activation=tanh`가 저장되며, Reach 노드는
 squash되지 않은 정책이 로봇에 명령하지 못하도록 기존 identity-output artifact를
 거부합니다. 노드 측 `action_clip=1.0`은 수치적 안전장치로 유지됩니다.
 
-각 정책 단계에서 노드는 절대 목표 대신 14개 상대 관절 offset을 publish합니다.
-컨트롤러는 이 offset을 50 ms 정책 주기 동안 유지합니다. reach v2에서는 Isaac
-Lab의 `RelativeJointPositionAction`과 맞추기 위해 매 1 kHz 컨트롤러 주기마다
-최신 측정 관절 위치와 유지된 offset을 더해 목표를 다시 계산한 뒤, PD torque와
-1 Nm/update torque-rate limit을 계산합니다. 별도의 100 Hz torque gate 또는
-torque-hold 단계는 없습니다.
+### Reach action 기준: `physics_step`과 `policy_step`
+
+정책 추론과 raw action 처리(`delta_q = 0.1 * action`)는 두 모드 모두 20 Hz입니다.
+차이는 50 ms 동안 유지할 관절 목표를 어느 시점의 측정값으로 만드는지입니다.
+
+| launch 값 | 의미 | 컨트롤러가 유지하는 값 |
+| --- | --- | --- |
+| `reach_policy_step_action:=false` (기본값) | `physics_step` | `delta_q[k]`; 매 controller update마다 `q_des(t) = q_measured(t) + delta_q[k]` |
+| `reach_policy_step_action:=true` | `policy_step` | 정책 시점에 계산한 절대 목표 `q_des[k] = q_measured(t_k) + delta_q[k]` |
+
+`policy_step`에서도 PD와 torque 계산은 20 Hz가 아니라 매 controller update에서
+계속 실행됩니다. 달라지는 것은 PD가 추종하는 절대 목표를 다음 정책 호출까지
+고정한다는 점입니다. 반대로 `physics_step`은 로봇이 움직일 때 기준 위치도 함께
+갱신되므로 offset 오차가 계속 유지됩니다.
+
+이 플래그는 100 Hz/1000 Hz controller 설정이나 matched/unmatched dynamics를
+선택하는 플래그가 아닙니다. 네 조건 모두에서 독립적으로 사용할 수 있으며, 반드시
+체크포인트를 학습할 때 사용한 action semantic과 맞춰야 합니다.
+
+- `dual_fr3_lab`에서 `--reach_policy_step_action`으로 학습한 모델:
+  `reach_policy_step_action:=true`
+- 기존 `physics_step` 방식으로 학습한 모델: 플래그 생략 또는
+  `reach_policy_step_action:=false`
+
+선택한 모드는 시작 로그의 `action reference=policy_step|physics_step`과 실행 결과의
+`metadata.json` 내 `run_context.action_reference_mode`에서 확인할 수 있습니다.
 
 ### Reach v2 MuJoCo 배포 정합성
 
@@ -129,10 +156,11 @@ torque-hold 단계는 없습니다.
 - **관측/모델:** Reach v2 `58 -> 14` 정책과 Isaac Lab 3.0의 `xyzw` quaternion
   convention(고정 base는 `[0, 0, 0, 1]`)을 사용합니다. 명시적인 `start_policy`
   요청이 승인될 때까지 previous-action 관측은 0으로 유지됩니다.
-- **행동 타이밍:** 정책 추론은 20 Hz로 수행하고, 결과 관절 offset을 50 ms 동안
-  유지합니다. 매 1 kHz 컨트롤러 update에서
-  `q_desired = q_measured + held_offset`을 다시 계산합니다. 추가 100 Hz effort
-  hold는 없습니다.
+- **행동 타이밍:** 정책 추론은 20 Hz입니다. `physics_step`은 결과 관절 offset을
+  50 ms 동안 유지하며 매 controller update에서 `q_desired = q_measured + offset`을
+  다시 계산합니다. `policy_step`은 정책 시점에 만든 절대 `q_desired`를 50 ms 동안
+  유지합니다. 두 모드 모두 별도의 effort hold 없이 매 controller update에서
+  PD torque를 다시 계산합니다.
 - **Effort 제어:** `Kp=80`, `Kd=4`의 직접 PD 제어를 사용합니다. 관절 1--4의
   effort 한계는 `87 Nm`, 관절 5--7의 한계는 `12 Nm`이며 torque-rate 한계는
   `1000 Nm/s`(1 ms update당 `1 Nm`)입니다.
@@ -200,6 +228,21 @@ publish하기 전에는 정책을 시작하지 마세요.
 ~~~bash
 ros2 launch fr3_husky_nn_policy dual_fr3_reach_policy.launch.py shadow_mode:=false auto_start:=false launch_move_group:=true use_mujoco:=true
 ~~~
+
+`dual_fr3_lab`에서 `--reach_policy_step_action`을 넣어 학습한 체크포인트는 다음과
+같이 동일한 semantic을 명시하고, 그 체크포인트에서 export한 NPZ를 지정합니다.
+
+~~~bash
+ros2 launch fr3_husky_nn_policy dual_fr3_reach_policy.launch.py \
+  use_mujoco:=true shadow_mode:=false auto_start:=false \
+  reach_policy_step_action:=true \
+  model_path:=/absolute/path/to/policy_step_actor.npz
+~~~
+
+기존 physics-step 체크포인트는 플래그를 생략하거나
+`reach_policy_step_action:=false`로 실행합니다. `use_mujoco`의 true/false와
+관계없이 같은 규칙을 사용합니다. 이 플래그는
+`dual_fr3_reach_trajectory.launch.py`에도 동일하게 제공됩니다.
 
 2. 터미널 2에서 두 팔을 학습 ready pose로 이동합니다. 명령이 성공적으로
    끝날 때까지 기다리세요.
@@ -394,7 +437,9 @@ closed-loop 위치 overlay를 식별 결과로 부르지 않습니다. 대신 �
 excitation을 적용하면서 측정 `q`, `qdot`, `tau_meas`를 기록합니다. 이 값들은
 [about_sysid.md](fr3_husky_nn_policy/about_sysid.md)에 설명한 후속
 inverse-dynamics torque-residual fit의 입력입니다. 이 노드는 **데이터를 수집하고
-검증할 뿐, 아직 MuJoCo parameter를 fit하거나 fit된 모델을 주장하지 않습니다.**
+검증하는 역할만 담당합니다. 별도의 `fit_sysid_dynamics_mujoco.py`와
+`fit_sysid_dynamics.py`가 정지 residual 점검과 마찰 회귀를 수행하지만, 결과를
+MuJoCo XML에 자동 반영하거나 검증 완료된 plant를 생성하지는 않습니다.
 
 관절별 trial은 다음 두 단계를 모두 포함하며, 다음 관절 전에 q0로 복귀해
 settle합니다.
@@ -448,6 +493,22 @@ ros2 service call /fr3_sysid_node/stop_probe std_srvs/srv/Trigger {}
 `0.02 rad` joint-limit margin에 들어가면 실행을 거부합니다. 전체 sweep 동안 하나의
 `RunPolicyControl` goal을 유지하며 trial 사이에 MoveIt으로 제어를 넘기지 않습니다.
 
+전체 real-hardware sweep은 dry run과 실제 수집을 각각 명시적으로 실행합니다.
+
+~~~bash
+# 14관절 reference/phase 미리보기: 로봇 명령 없음
+ros2 launch fr3_husky_nn_policy fr3_sysid.launch.py \
+  sweep_mode:=true launch_move_group:=true dry_run:=true
+
+# 위 결과와 모든 관절의 +/- 경로를 확인한 뒤 실제 수집
+ros2 launch fr3_husky_nn_policy fr3_sysid.launch.py \
+  sweep_mode:=true launch_move_group:=true dry_run:=false
+~~~
+
+단일 관절 모드의 `target_joint`는 0부터 13까지의 인덱스이며 순서는
+`left_fr3_joint1..7`, `right_fr3_joint1..7`입니다. 기본값 `5`는
+`left_fr3_joint6`입니다.
+
 MuJoCo에서 동일한 수집 경로를 실행하려면 plant switch만 바꾸세요.
 
 ~~~bash
@@ -483,6 +544,61 @@ measured-relative PD 명령, 재구성한 unclamped PD torque, 공통 `q0_*`가
 측정된 운동을 대체하지 않습니다. 유한하지 않은 `tau_meas_*`가 포함된 hardware
 실행은 진단용으로 보존하지만 torque SysID 데이터로는 인정하지 않습니다.
 
+### inverse-dynamics 점검과 마찰 회귀
+
+현재 권장 분석기는 `scripts/tools/fit_sysid_dynamics_mujoco.py`입니다. 수집 당시의
+로봇과 동일한 EE/payload를 포함한 MJCF를 사용해야 합니다. 현재 SysID launch의
+기본 구성은 plate, no gripper, no camera이므로 예를 들면 다음처럼 생성합니다.
+
+~~~bash
+source /opt/ros/jazzy/setup.bash
+source /home/dyros/etri_ws/install/setup.bash
+
+ros2 run xacro xacro \
+  "$(ros2 pkg prefix fr3_husky_description)/share/fr3_husky_description/mjcf/dual_fr3.xml.xacro" \
+  hand:=false with_realsense:=false with_azure:=false mobile:=false \
+  -o /tmp/dual_fr3_plate_nocam.xml
+~~~
+
+먼저 정지 구간만 이용해 torque 부호, 중력, joint mapping 및 payload 정합성을
+확인합니다. 그 뒤 양방향 rich-excitation CSV에 대해서만 마찰 회귀를 수행합니다.
+
+~~~bash
+# 정지 residual 점검만 수행
+python3 scripts/tools/fit_sysid_dynamics_mujoco.py \
+  --mjcf /tmp/dual_fr3_plate_nocam.xml \
+  --csv 'logs/sysid_raw/real/*.csv' \
+  --no-fit
+
+# 관절별 Coulomb/viscous friction과 bias 회귀
+python3 scripts/tools/fit_sysid_dynamics_mujoco.py \
+  --mjcf /tmp/dual_fr3_plate_nocam.xml \
+  --csv 'logs/sysid_raw/real/*.csv'
+~~~
+
+이 스크립트에는 MuJoCo Python package, NumPy 및 SciPy가 필요합니다. 시스템
+Python에 없다면 이 repository에서 사용 중인 `cRobotics` 환경의 Python으로
+`python3` 부분을 대체하세요.
+
+분석기는 기본적으로 MJCF의 `damping`, `frictionloss`, `armature`를 0으로 만든 뒤
+중력 `-9.81 m/s²`를 적용해 `mj_inverse`의 강체 torque를 계산합니다. 따라서
+`tau_meas - tau_rigid_body` residual은 실제 plant의 전체 passive effect를
+포함합니다. 기존 MJCF passive parameter까지 포함한 모델과의 차이를 보려면
+`--keep-passive`를 사용합니다. 측정 `qdot`에는 기본 25 Hz, 4차 Butterworth
+zero-phase filter를 적용하며, `--cutoff-hz`, `--gravity`, `--cruise-qdd` 등은
+CLI에서 조정할 수 있습니다.
+
+현재 출력은 terminal의 정지 residual과 관절별 `Fc`, `Fv`, bias, 회귀 RMSE입니다.
+가속 excitation과 `qdd`는 강체 inverse dynamics 계산에는 사용되지만, 현재 회귀식은
+constant-velocity 구간의 `sign(qdot)`, `qdot`, bias만 사용합니다. 따라서
+**armature를 별도 계수로 추정하거나 held-out torque RMSE를 생성하고 XML을
+갱신하는 단계는 아직 구현되지 않았습니다.**
+
+`scripts/tools/fit_sysid_dynamics.py`는 Pinocchio/URDF 기반 비교 도구입니다. 기본
+URDF는 EE가 없는 단일 FR3 모델이므로, 실제 plate 실험의 최종 fitting보다는
+mapping과 gravity 검증용입니다. 상세한 가정과 현재 검증 상태는
+[about_sysid.md](fr3_husky_nn_policy/about_sysid.md)를 참고하세요.
+
 ### Reach 궤적 로그
 
 성공한 `start_policy` 요청은 20 Hz 궤적 로그를 시작합니다. MuJoCo 실행은
@@ -505,6 +621,100 @@ EEF 좌표는 학습과 동일하게 각 `fr3_link7` frame의 local
 `[0, 0, 0.132] m` offset을 더해 정의합니다. plot의 팔별 목표는 명령한 중심에서
 base-frame Y축 방향으로 ±`0.20 m`를 더한 값입니다. 기본 출력 root를 바꾸려면
 `log_root` ROS parameter를 설정하세요.
+
+### Open-loop Reach action replay
+
+`dual_fr3_reach_trajectory.launch.py`는 actor 추론을 유한 길이의 20 Hz raw-action
+trajectory로 대체합니다. controller action, 선택한 action 기준 모드, 안전 검사,
+EEF logger 및 policy-trace logger는 정책 rollout과 동일합니다. 각 CSV row가
+logger에서 사용할 목표 중심도 포함하므로 replay 중 외부 `/reach_target_pose`
+메시지는 무시합니다.
+
+다음 세 trajectory가 패키지에 포함됩니다.
+
+| 파일 | 내용 |
+| --- | --- |
+| `reach_1khz_matched_nominal.csv` | 기록된 1 kHz/matched MuJoCo rollout의 정책 action 321개 |
+| `reach_1khz_matched_nominal_100hz_matched_noise.csv` | nominal action에 결정론적 zero-mean Gaussian perturbation을 더한 trajectory |
+| `reach_1khz_matched_nominal_100hz_unmatched_noise.csv` | 100 Hz/unmatched rollout에서 추정한 perturbation을 더한 trajectory |
+
+두 noisy 파일은 seed 100과 동일한 표준화 random sample을 사용합니다. 관절별 raw
+action 표준편차는 time-aligned 100 Hz matched 또는 unmatched trace와 1 kHz/matched
+trace 사이의 정상상태 차이에서 bias를 제거해 추정했습니다. 정확한 source hash,
+추정·실현 noise scale 및 clipping 횟수는
+`trajectories/reach_trajectory_metadata.json`에 기록되어 있습니다.
+
+두 팔을 학습 ready pose로 이동한 뒤 nominal replay를 launch하고 시작합니다.
+
+~~~bash
+ros2 launch fr3_husky_nn_policy dual_fr3_reach_trajectory.launch.py \
+  shadow_mode:=false auto_start:=false \
+  log_task_name:=dual_fr3_reach_trajectory_nominal
+
+ros2 service call /ppo_reach_policy_node/start_policy std_srvs/srv/Trigger {}
+~~~
+
+위 명령은 기본 `physics_step` 방식입니다. 같은 trajectory를 `policy_step` 절대
+목표 방식으로 처리하려면 launch 명령에 다음 인자를 추가합니다.
+
+~~~bash
+reach_policy_step_action:=true
+~~~
+
+즉 trajectory CSV, `noise_scale`, 20 Hz replay timing은 그대로이고 controller에
+전달되는 목표의 기준만 바뀝니다. 정책 rollout과 마찬가지로 결과
+`metadata.json`의 `run_context.action_reference_mode`에서 실제 선택값을 확인할 수
+있습니다.
+
+noisy replay 전에는 두 팔을 같은 ready pose로 되돌린 뒤 matched-noise CSV를
+선택합니다.
+
+~~~bash
+ros2 launch fr3_husky_nn_policy dual_fr3_reach_trajectory.launch.py \
+  shadow_mode:=false auto_start:=false \
+  log_task_name:=dual_fr3_reach_trajectory_noisy \
+  trajectory_path:="$(ros2 pkg prefix fr3_husky_nn_policy)/share/fr3_husky_nn_policy/trajectories/reach_1khz_matched_nominal_100hz_matched_noise.csv"
+
+ros2 service call /ppo_reach_policy_node/start_policy std_srvs/srv/Trigger {}
+~~~
+
+100 Hz/unmatched noise profile은 unmatched CSV를 선택합니다.
+
+~~~bash
+ros2 launch fr3_husky_nn_policy dual_fr3_reach_trajectory.launch.py \
+  shadow_mode:=false auto_start:=false \
+  log_task_name:=dual_fr3_reach_trajectory_unmatched_noise \
+  trajectory_path:="$(ros2 pkg prefix fr3_husky_nn_policy)/share/fr3_husky_nn_policy/trajectories/reach_1khz_matched_nominal_100hz_unmatched_noise.csv" \
+  noise_scale:=1.0
+
+ros2 service call /ppo_reach_policy_node/start_policy std_srvs/srv/Trigger {}
+~~~
+
+`noise_scale`은 replay 시 선택한 CSV의 `noise_*` column을 다시 scaling합니다.
+
+- `noise_scale:=0.0`: nominal action sequence
+- `noise_scale:=1.0`: CSV에 저장된 matched 또는 unmatched noise 수준
+- `noise_scale:=0.5`, `noise_scale:=2.0`: 저장된 noise의 절반 또는 두 배
+
+nominal CSV의 `noise_*` column은 모두 0이므로 `noise_scale` 값과 관계없이 nominal
+action을 생성합니다. scaling 후 실제 action에는 기존 `action_clip`과 joint safety
+projection이 계속 적용됩니다.
+
+마지막 action 다음의 첫 20 Hz tick에서 controller cancel을 요청해 마지막 응답
+sample까지 기록합니다. logger는 정책 rollout과 동일한 `eef_trajectory.csv`,
+`policy_trace.csv`, metadata 및 plot을 생성합니다. metadata의 `run_context`에는
+trajectory 경로, SHA-256, row 수, 원본 duration, launch-time noise scale 및
+scaling 전후 raw-action noise RMS가 기록됩니다.
+
+기록된 ablation run으로부터 모든 CSV를 다시 생성하려면 다음 명령을 사용합니다.
+
+~~~bash
+cd /home/dyros/etri_ws/src/fr3_husky_etri/fr3_husky_nn_policy
+python3 scripts/generate_reach_action_trajectories.py
+~~~
+
+generator의 `--noise-scale`은 새 CSV에 저장할 noise 자체를 바꿉니다. launch 인자
+`noise_scale`은 CSV를 다시 생성하지 않고 기존 noisy CSV를 scaling합니다.
 
 ## actor 다시 내보내기
 

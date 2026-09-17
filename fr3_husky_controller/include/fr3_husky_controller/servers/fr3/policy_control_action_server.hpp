@@ -77,6 +77,9 @@ private:
     double joint_velocity_scale_{0.10};
     double joint_acceleration_scale_{0.20};
     bool isaac_relative_control_{false};
+    // True for physics-step measured-relative references; false for an
+    // absolute target captured at the policy step.
+    bool refresh_isaac_relative_target_{true};
     bool control_gripper_{true};
 
     double activation_time_s_{0.0};

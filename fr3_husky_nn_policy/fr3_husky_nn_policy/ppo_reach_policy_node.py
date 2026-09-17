@@ -18,6 +18,7 @@ from sensor_msgs.msg import JointState
 from std_srvs.srv import Trigger
 from tf2_ros import Buffer, TransformException, TransformListener
 
+from .action_semantics import encode_reach_joint_command
 from .numpy_actor import NumpyMLPActor
 from .observation import (
     DEFAULT_DUAL_ARM_JOINT_POSITION,
@@ -25,6 +26,7 @@ from .observation import (
     build_reach_observation,
 )
 from .reach_logger import ReachRunLogger, rotate_vector
+from .reach_trajectory import ReachActionTrajectory
 
 
 LOWER_LIMITS = np.tile(
@@ -47,12 +49,15 @@ class PPOReachPolicyNode(Node):
         default_model = str(share / "models" / "dual_fr3_reach_actor.npz")
 
         self.declare_parameter("model_path", default_model)
+        self.declare_parameter("trajectory_path", "")
+        self.declare_parameter("trajectory_noise_scale", 1.0)
         self.declare_parameter("joint_states_topic", "/joint_states")
         self.declare_parameter("target_pose_topic", "/reach_target_pose")
         self.declare_parameter("base_frame", "base")
         self.declare_parameter("command_topic", "/policy_joint_command")
         self.declare_parameter("control_action", "/fr3_policy_control")
         self.declare_parameter("policy_rate_hz", 20.0)
+        self.declare_parameter("reach_policy_step_action", False)
         self.declare_parameter("joint_state_timeout_s", 0.15)
         self.declare_parameter("command_timeout_s", 0.15)
         self.declare_parameter("max_duration_s", 0.0)
@@ -61,8 +66,8 @@ class PPOReachPolicyNode(Node):
         self.declare_parameter("max_actuator_step_rad", 0.001)
         self.declare_parameter("joint_velocity_scale", 0.10)
         self.declare_parameter("joint_acceleration_scale", 0.20)
-        # Kept in the action goal for compatibility. The v2 controller updates
-        # the relative target and effort every 1 kHz controller cycle.
+        # Kept in the action goal for compatibility. The command flag, rather
+        # than this legacy frequency, now selects reference-update semantics.
         self.declare_parameter("relative_target_refresh_hz", 1000.0)
         self.declare_parameter("joint_limit_margin_rad", 0.02)
         self.declare_parameter("ready_tolerance_rad", 0.20)
@@ -83,17 +88,41 @@ class PPOReachPolicyNode(Node):
         self.declare_parameter("reach_offset_y", 0.20)
 
         self.base_frame = str(self.get_parameter("base_frame").value)
-        self.actor = NumpyMLPActor(self.get_parameter("model_path").value)
-        if self.actor.input_dim != 58 or self.actor.output_dim != 14:
-            raise ValueError(
-                f"dual_fr3_reach requires a 58->14 actor, got "
-                f"{self.actor.input_dim}->{self.actor.output_dim}"
-            )
-        if self.actor.output_activation != "tanh":
-            raise ValueError(
-                "dual_fr3_reach Sim2Real requires a tanh-bounded actor; "
-                f"model declares output_activation={self.actor.output_activation!r}"
-            )
+        self.reach_policy_step_action = bool(
+            self.get_parameter("reach_policy_step_action").value
+        )
+        self.action_reference_mode = (
+            "policy_step" if self.reach_policy_step_action else "physics_step"
+        )
+        configured_trajectory = str(self.get_parameter("trajectory_path").value).strip()
+        self.trajectory = (
+            ReachActionTrajectory.load(configured_trajectory)
+            if configured_trajectory
+            else None
+        )
+        self.trajectory_noise_scale = float(
+            self.get_parameter("trajectory_noise_scale").value
+        )
+        if (
+            not np.isfinite(self.trajectory_noise_scale)
+            or self.trajectory_noise_scale < 0.0
+        ):
+            raise ValueError("trajectory_noise_scale must be finite and non-negative")
+        self.trajectory_index = 0
+        self.trajectory_complete_requested = False
+        self.actor = None
+        if self.trajectory is None:
+            self.actor = NumpyMLPActor(self.get_parameter("model_path").value)
+            if self.actor.input_dim != 58 or self.actor.output_dim != 14:
+                raise ValueError(
+                    f"dual_fr3_reach requires a 58->14 actor, got "
+                    f"{self.actor.input_dim}->{self.actor.output_dim}"
+                )
+            if self.actor.output_activation != "tanh":
+                raise ValueError(
+                    "dual_fr3_reach Sim2Real requires a tanh-bounded actor; "
+                    f"model declares output_activation={self.actor.output_activation!r}"
+                )
 
         self.target_position = self._vector_parameter("target_position")
         self.target_min = self._vector_parameter("target_min")
@@ -151,13 +180,22 @@ class PPOReachPolicyNode(Node):
         self.timer = self.create_timer(1.0 / rate, self._policy_step)
 
         mode = "SHADOW" if self.get_parameter("shadow_mode").value else "COMMAND"
+        if self.trajectory is None:
+            self.get_logger().info(
+                f"Loaded {self.actor.model_path} ({self.actor.input_dim}->{self.actor.output_dim}, "
+                f"output={self.actor.output_activation}, source {self.actor.source_sha256[:12]}...), "
+                f"mode={mode}, rate={rate:.1f} Hz"
+            )
+        else:
+            self.get_logger().info(
+                f"Loaded trajectory {self.trajectory.path} ({len(self.trajectory)} actions, "
+                f"source duration={self.trajectory.duration_s:.3f}s, "
+                f"noise scale={self.trajectory_noise_scale:g}, "
+                f"sha256={self.trajectory.sha256[:12]}...), mode={mode}, rate={rate:.1f} Hz"
+            )
         self.get_logger().info(
-            f"Loaded {self.actor.model_path} ({self.actor.input_dim}->{self.actor.output_dim}, "
-            f"output={self.actor.output_activation}, source {self.actor.source_sha256[:12]}...), "
-            f"mode={mode}, rate={rate:.1f} Hz"
-        )
-        self.get_logger().info(
-            f"Reach target in '{self.base_frame}': {self.target_position.tolist()}"
+            f"Reach target in '{self.base_frame}': {self.target_position.tolist()}; "
+            f"action reference={self.action_reference_mode}"
         )
 
     def _vector_parameter(self, name: str) -> np.ndarray:
@@ -200,6 +238,11 @@ class PPOReachPolicyNode(Node):
             self.joint_update_ns[output_index] = now_ns
 
     def _target_pose_callback(self, msg: PoseStamped):
+        if self.trajectory is not None:
+            self._log_status(
+                "Ignoring external target while trajectory replay owns the target"
+            )
+            return
         if msg.header.frame_id != self.base_frame:
             self._log_status(
                 f"Ignoring target frame '{msg.header.frame_id}', expected '{self.base_frame}'"
@@ -268,6 +311,10 @@ class PPOReachPolicyNode(Node):
 
         self.previous_action.fill(0.0)
         self.sequence = 0
+        self.trajectory_index = 0
+        self.trajectory_complete_requested = False
+        if self.trajectory is not None:
+            self.target_position = self.trajectory.target_centers[0].copy()
         goal = RunPolicyControl.Goal()
         goal.robot_name = "dual"
         goal.command_timeout_s = float(
@@ -321,6 +368,7 @@ class PPOReachPolicyNode(Node):
                 robot_root_offset_xyz=self.robot_root_offset_xyz,
                 reach_offset_y=self.reach_offset_y,
                 sample_rate_hz=float(self.get_parameter("policy_rate_hz").value),
+                run_context=self._run_context(),
             )
             self.logging_start_monotonic_ns = time.monotonic_ns()
             self.get_logger().info(
@@ -330,6 +378,32 @@ class PPOReachPolicyNode(Node):
         except (OSError, ValueError) as error:
             self.run_logger = None
             self.get_logger().error(f"Failed to start EEF trajectory logging: {error}")
+
+    def _run_context(self) -> dict:
+        if self.trajectory is None:
+            assert self.actor is not None
+            return {
+                "command_source": "policy",
+                "model_path": str(self.actor.model_path),
+                "model_source_sha256": self.actor.source_sha256,
+                "action_reference_mode": self.action_reference_mode,
+            }
+        return {
+            "command_source": "trajectory",
+            "action_reference_mode": self.action_reference_mode,
+            "trajectory_path": str(self.trajectory.path),
+            "trajectory_sha256": self.trajectory.sha256,
+            "trajectory_rows": len(self.trajectory),
+            "trajectory_source_duration_s": self.trajectory.duration_s,
+            "trajectory_base_raw_action_noise_rms": float(
+                np.sqrt(np.mean(self.trajectory.noise.astype(np.float64) ** 2))
+            ),
+            "trajectory_noise_scale": self.trajectory_noise_scale,
+            "trajectory_scaled_raw_action_noise_rms": float(
+                self.trajectory_noise_scale
+                * np.sqrt(np.mean(self.trajectory.noise.astype(np.float64) ** 2))
+            ),
+        }
 
     def _record_eef_sample(self):
         if self.run_logger is None:
@@ -420,6 +494,8 @@ class PPOReachPolicyNode(Node):
             f"policy control finished: success={result.success}, "
             f"message='{result.message}', last_sequence={result.last_sequence}"
         )
+        if self.trajectory_complete_requested:
+            self.finalize_reach_log()
 
     def _stop_service(self, _request, response):
         if self.goal_handle is None:
@@ -446,8 +522,6 @@ class PPOReachPolicyNode(Node):
                 self._log_status(message)
             return
 
-        self._record_eef_sample()
-
         if (
             self.get_parameter("auto_start").value
             and not self.get_parameter("shadow_mode").value
@@ -462,19 +536,39 @@ class PPOReachPolicyNode(Node):
                 if not success:
                     self._log_status(start_message)
 
+        if self.trajectory is not None and self.goal_active:
+            if self.trajectory_index >= len(self.trajectory):
+                self._record_eef_sample()
+                self._finish_trajectory()
+                return
+            self.target_position = self.trajectory.target_centers[
+                self.trajectory_index
+            ].copy()
+
+        self._record_eef_sample()
+
+        if self.trajectory is not None and not self.goal_active:
+            return
+
         try:
-            observation = build_reach_observation(
-                self.joint_position,
-                self.joint_velocity,
-                self.target_position,
-                self.previous_action,
-            )
-            action = self.actor(observation)
+            if self.trajectory is None:
+                observation = build_reach_observation(
+                    self.joint_position,
+                    self.joint_velocity,
+                    self.target_position,
+                    self.previous_action,
+                )
+                assert self.actor is not None
+                action = self.actor(observation)
+            else:
+                action = self.trajectory.action_at(
+                    self.trajectory_index, self.trajectory_noise_scale
+                )
         except (ValueError, FloatingPointError) as error:
             if self.goal_active:
-                self._cancel_for_fault(f"Policy inference failed: {error}")
+                self._cancel_for_fault(f"Action generation failed: {error}")
             else:
-                self._log_status(f"Policy inference failed: {error}")
+                self._log_status(f"Action generation failed: {error}")
             return
 
         action_clip = float(self.get_parameter("action_clip").value)
@@ -498,8 +592,8 @@ class PPOReachPolicyNode(Node):
 
         # Keep the learned policy goal/action semantics, but project the
         # real-robot reference into a small safe band at the joint limits.
-        # The controller applies the same projection at every 1 kHz update,
-        # so this does not terminate the policy when a joint reaches a limit.
+        # Physics-step mode repeats the projection in the controller; policy-
+        # step mode sends this already projected absolute target for holding.
         margin = float(self.get_parameter("joint_limit_margin_rad").value)
         safe_lower = LOWER_LIMITS + margin
         safe_upper = UPPER_LIMITS - margin
@@ -534,13 +628,29 @@ class PPOReachPolicyNode(Node):
         command.header.frame_id = self.base_frame
         command.sequence = self.sequence
         command.robot_name = "dual"
-        # Hold this processed offset for one 20 Hz policy step. The controller
-        # adds it to the latest measured position at each 1 kHz PD update,
-        # matching Isaac Lab's RelativeJointPositionAction.apply_actions().
-        command.target_positions = delta.tolist()
-        command.relative_position_offsets = True
+        command_values, relative_position_offsets = encode_reach_joint_command(
+            target, delta, self.reach_policy_step_action
+        )
+        command.target_positions = command_values.tolist()
+        command.relative_position_offsets = relative_position_offsets
         command.gripper_action = 0.0
         self.command_publisher.publish(command)
+        if self.trajectory is not None:
+            self.trajectory_index += 1
+
+    def _finish_trajectory(self):
+        if self.trajectory_complete_requested:
+            return
+        self.trajectory_complete_requested = True
+        self.get_logger().info(
+            f"Trajectory replay completed after {self.trajectory_index} actions; "
+            "requesting controller stop"
+        )
+        if self.goal_handle is not None:
+            self.goal_handle.cancel_goal_async()
+        else:
+            self.goal_active = False
+            self.finalize_reach_log()
 
 
 def main(args: Optional[list[str]] = None):

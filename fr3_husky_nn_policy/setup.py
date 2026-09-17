@@ -16,7 +16,12 @@ setup(
         ),
         ("share/" + package_name + "/launch", glob("launch/*.launch.py")),
         ("share/" + package_name + "/models", glob("models/*.npz") + glob("models/*.yaml")),
+        (
+            "share/" + package_name + "/trajectories",
+            glob("trajectories/*.csv") + glob("trajectories/*.json"),
+        ),
     ],
+    scripts=["scripts/generate_reach_action_trajectories.py"],
     install_requires=["setuptools", "numpy", "matplotlib"],
     zip_safe=True,
     maintainer="DYROS",

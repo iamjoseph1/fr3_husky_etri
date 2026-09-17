@@ -156,6 +156,7 @@ void PolicyControl::onGoalAccepted(const ActionT::Goal& goal)
     joint_velocity_scale_ = goal.joint_velocity_scale;
     joint_acceleration_scale_ = goal.joint_acceleration_scale;
     isaac_relative_control_ = goal.isaac_relative_control;
+    refresh_isaac_relative_target_ = true;
     control_gripper_ = goal.control_gripper;
 }
 
@@ -179,11 +180,10 @@ void PolicyControl::onStart()
         node_->get_logger(),
         "[%s] started robot=%s timeout=%.3fs max_duration=%.3fs "
         "policy_delta=%.3frad actuator_step=%.4frad velocity_scale=%.2f "
-        "acceleration_scale=%.2f mode=%s relative_update=%s gripper=%s",
+        "acceleration_scale=%.2f mode=%s reference=command-selected gripper=%s",
         name_.c_str(), controlled_robot_.c_str(), command_timeout_s_, max_duration_s_,
         max_policy_target_delta_rad_, max_actuator_step_rad_, joint_velocity_scale_,
-        joint_acceleration_scale_, isaac_relative_control_ ? "isaac-relative" : "rate-limited-absolute",
-        isaac_relative_control_ ? "controller-rate" : "n/a",
+        joint_acceleration_scale_, isaac_relative_control_ ? "isaac-pd" : "rate-limited-absolute",
         control_gripper_ ? "true" : "false");
 }
 
@@ -228,9 +228,9 @@ bool PolicyControl::validateTarget(const CommandData& command, std::string& erro
         error = "policy command dimension/robot_name does not match active goal";
         return false;
     }
-    if (command.relative_position_offsets != isaac_relative_control_)
+    if (command.relative_position_offsets && !isaac_relative_control_)
     {
-        error = "policy command relative/absolute semantics do not match active goal";
+        error = "relative policy command requires Isaac control mode";
         return false;
     }
 
@@ -445,15 +445,30 @@ PolicyControl::ComputeResult PolicyControl::compute(
             const Eigen::Index index = offset + static_cast<Eigen::Index>(i);
             if (isaac_relative_control_)
             {
-                // Keep the processed offset unchanged until the next 20 Hz
-                // policy command. Every 1 kHz control step adds it to the
-                // latest measured position.
-                q_offset_(index) = command->target_positions[i];
+                if (command->relative_position_offsets)
+                {
+                    // Physics-step reference: hold the processed offset, then
+                    // add it to the latest measurement in every control cycle.
+                    q_offset_(index) = command->target_positions[i];
+                }
+                else
+                {
+                    // Policy-step reference: the policy node captured the
+                    // measured position at its 20 Hz tick. Hold that absolute
+                    // target until the next command while retaining Isaac PD.
+                    q_target_(index) = command->target_positions[i];
+                    q_desired_(index) = q_target_(index);
+                    qdot_desired_(index) = 0.0;
+                }
             }
             else
             {
                 q_target_(index) = command->target_positions[i];
             }
+        }
+        if (isaac_relative_control_)
+        {
+            refresh_isaac_relative_target_ = command->relative_position_offsets;
         }
         last_sequence_ = command->sequence;
         last_command_time_s_ = command->received_time_s;
@@ -498,12 +513,13 @@ PolicyControl::ComputeResult PolicyControl::compute(
 
     if (isaac_relative_control_)
     {
-        // Hold the 20 Hz policy offset, but reproduce Isaac Lab's
-        // RelativeJointPositionAction at every 1 kHz controller update:
-        //     q_desired = measured_q + held_offset
-        // The PD torque and its 1 Nm/update torque-rate limit are also evaluated
-        // every cycle; there is no separate 100 Hz torque gate or hold.
-        refreshIsaacRelativeTarget();
+        // Both reference modes evaluate PD torque and its torque-rate limit on
+        // every controller cycle. Only physics-step mode refreshes the target
+        // from measured_q + held_offset; policy-step mode holds q_desired.
+        if (refresh_isaac_relative_target_)
+        {
+            refreshIsaacRelativeTarget();
+        }
         writeIsaacEffortCommand(period.seconds());
     }
     else
@@ -528,7 +544,20 @@ PolicyControl::ComputeResult PolicyControl::compute(
     feedback->command_age_s = command_age_s;
     feedback->max_joint_error = max_joint_error;
     feedback->last_sequence = last_sequence_;
-    feedback->status = has_command_ ? "tracking" : "waiting for first command";
+    if (!has_command_)
+    {
+        feedback->status = "waiting for first command";
+    }
+    else if (isaac_relative_control_)
+    {
+        feedback->status = refresh_isaac_relative_target_
+            ? "tracking-physics-step-reference"
+            : "tracking-policy-step-reference";
+    }
+    else
+    {
+        feedback->status = "tracking";
+    }
     publishFeedback(feedback);
     return ComputeResult::RUNNING;
 }

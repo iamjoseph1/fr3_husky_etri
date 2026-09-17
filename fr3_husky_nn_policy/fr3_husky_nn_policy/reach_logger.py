@@ -5,6 +5,7 @@ import json
 import re
 from datetime import datetime
 from pathlib import Path
+from typing import Any, Mapping
 
 import numpy as np
 
@@ -69,6 +70,7 @@ class ReachRunLogger:
         robot_root_offset_xyz: np.ndarray,
         reach_offset_y: float,
         sample_rate_hz: float,
+        run_context: Mapping[str, Any] | None = None,
     ):
         started_at = datetime.now().astimezone()
         safe_task_name = re.sub(r"[^A-Za-z0-9_.-]+", "_", task_name).strip("._")
@@ -96,6 +98,7 @@ class ReachRunLogger:
         self.eef_coordinate_frame = "robot_root_local"
         self.reach_offset_y = float(reach_offset_y)
         self.sample_rate_hz = float(sample_rate_hz)
+        self.run_context = dict(run_context or {})
         self.sample_count = 0
         self._finalized = False
         self._csv_file = self.csv_path.open("w", newline="", encoding="utf-8")
@@ -183,6 +186,7 @@ class ReachRunLogger:
             "per_arm_target_offset_y_m": self.reach_offset_y,
             "csv": self.csv_path.name,
             "policy_trace_csv": self.policy_trace_path.name,
+            "run_context": self.run_context,
         }
         (self.run_dir / "metadata.json").write_text(
             json.dumps(metadata, indent=2), encoding="utf-8"

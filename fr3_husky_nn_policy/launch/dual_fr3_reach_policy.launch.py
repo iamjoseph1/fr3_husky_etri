@@ -3,6 +3,7 @@ from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration, PathJoinSubstitution, PythonExpression
 from launch_ros.actions import Node
+from launch_ros.parameter_descriptions import ParameterValue
 from launch_ros.substitutions import FindPackageShare
 
 
@@ -38,6 +39,9 @@ def generate_launch_description():
                 "model_path": LaunchConfiguration("model_path"),
                 "shadow_mode": LaunchConfiguration("shadow_mode"),
                 "auto_start": LaunchConfiguration("auto_start"),
+                "reach_policy_step_action": ParameterValue(
+                    LaunchConfiguration("reach_policy_step_action"), value_type=bool
+                ),
                 "reach_goal_sequence": LaunchConfiguration("reach_goal_sequence"),
                 "reach_goal_sequence_loop": LaunchConfiguration(
                     "reach_goal_sequence_loop"
@@ -64,6 +68,15 @@ def generate_launch_description():
             DeclareLaunchArgument("launch_move_group", default_value="false"),
             DeclareLaunchArgument("shadow_mode", default_value="true"),
             DeclareLaunchArgument("auto_start", default_value="false"),
+            DeclareLaunchArgument(
+                "reach_policy_step_action",
+                default_value="false",
+                description=(
+                    "If true, hold q_measured(t_k)+0.1*action[k] as an absolute "
+                    "target until the next policy step; false preserves the "
+                    "per-controller-step measured-relative target."
+                ),
+            ),
             DeclareLaunchArgument("reach_goal_sequence", default_value=""),
             DeclareLaunchArgument("reach_goal_sequence_loop", default_value="false"),
             DeclareLaunchArgument(

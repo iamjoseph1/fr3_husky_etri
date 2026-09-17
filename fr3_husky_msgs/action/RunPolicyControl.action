@@ -9,12 +9,13 @@ float64 max_actuator_step_rad
 # Fractions of the FR3 per-joint velocity and acceleration limits.
 float64 joint_velocity_scale
 float64 joint_acceleration_scale
-# Reproduce Isaac Lab RelativeJointPositionAction semantics. In this mode
-# PolicyJointCommand.target_positions contains relative joint offsets, the
-# absolute target is refreshed from measured q, and the legacy trajectory
-# rate limiter above is bypassed.
+# Use the Reach-specific Isaac PD/effort-limit/torque-rate-limit path and bypass
+# the legacy trajectory limiter. PolicyJointCommand.relative_position_offsets
+# selects whether each command is a controller-step-refreshed offset or a
+# policy-step absolute target.
 bool isaac_relative_control
-# Legacy API field; reach v2 always refreshes at the controller rate (1 kHz).
+# Legacy API field retained for compatibility; command semantics are selected
+# by PolicyJointCommand.relative_position_offsets.
 float64 relative_target_refresh_hz
 bool control_gripper
 ---

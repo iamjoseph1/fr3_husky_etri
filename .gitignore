@@ -3,3 +3,5 @@
 /logs/torque_step/
 /log
 /logs
+/fr3_husky_nn_policy/ablation_mujoco
+/fr3_husky_nn_policy/ablation_realworld

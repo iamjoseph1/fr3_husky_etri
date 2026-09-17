@@ -1,6 +1,13 @@
 ppo_reach_policy_node:
   ros__parameters:
     model_path: ""
+    # Non-empty selects finite open-loop trajectory replay instead of actor
+    # inference. The trajectory still uses the same selectable action-reference,
+    # safety, controller, and ReachRunLogger path as the learned policy.
+    trajectory_path: ""
+    # Rescale the trajectory's noise_* columns at replay time. Zero recovers
+    # nominal actions; one uses the CSV's recorded noise level.
+    trajectory_noise_scale: 1.0
     # Subscribe to the dual-arm broadcaster directly. This topic exists for
     # both real hardware and MuJoCo and contains exactly the 14 arm joints.
     joint_states_topic: /dual_fr3/joint_states
@@ -10,6 +17,10 @@ ppo_reach_policy_node:
     control_action: /fr3_policy_control
 
     policy_rate_hz: 20.0
+    # false: q_target(t)=q_measured(t)+delta_q[k] at every controller step.
+    # true: q_target[k]=q_measured(t_k)+delta_q[k], held until the next policy step.
+    # The Reach launch exposes this as reach_policy_step_action:=true/false.
+    reach_policy_step_action: false
     joint_state_timeout_s: 0.15
     command_timeout_s: 0.15
     # 0 means keep following terminal target updates until explicitly stopped.
@@ -19,13 +30,13 @@ ppo_reach_policy_node:
     # relative offset = 0.1 * bounded_action.
     action_clip: 1.0
     max_policy_target_delta_rad: 0.11
-    # Legacy absolute-target limiter parameters. They are ignored by Reach,
-    # which uses Isaac-style relative control, but remain in the shared action.
+    # Legacy trajectory-limiter parameters. They are ignored by Reach, which
+    # uses the Isaac-style direct PD path, but remain in the shared action.
     max_actuator_step_rad: 0.001
     joint_velocity_scale: 0.10
     joint_acceleration_scale: 0.20
-    # Legacy action-API field. Reach v2 recomputes measured_q + offset and PD
-    # torque on every 1 kHz controller cycle.
+    # Legacy action-API field retained for message compatibility. Reference
+    # timing is selected by reach_policy_step_action instead.
     relative_target_refresh_hz: 1000.0
     joint_limit_margin_rad: 0.02
     ready_tolerance_rad: 0.20
