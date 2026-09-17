@@ -8,6 +8,7 @@
   - [fr3_husky_description](#fr3_husky_description)
   - [fr3_husky_controller](#fr3_husky_controller)
   - [fr3_husky_moveit_config](#fr3_husky_moveit_config)
+  - [fr3_husky_nn_policy](#fr3_husky_nn_policy)
 - [MuJoCo Simulation](#mujoco-simulation)
 - [Notes](#notes)
 
@@ -179,6 +180,14 @@ ros2 launch fr3_husky_moveit_config fr3_moveit.launch.py \
   - `load_mobile` : `true|false`
   - `use_fake_hardware` : `true|false`
   - `fake_sensor_commands` : `true|false`
+
+### `fr3_husky_nn_policy`
+
+- Dual-arm neural-policy deployment, trajectory logging, and experiment tools.
+- The [package README](fr3_husky_nn_policy/README.md) documents both the
+  response-comparison/consistency probe and the separate torque SysID data
+  collector. The latter logs rich real/MuJoCo excitation data for an offline
+  inverse-dynamics fit; it is not a closed-loop position-overlay check.
 
 ---
 
