@@ -62,6 +62,7 @@ def _launch_setup(context, *args, **kwargs):
     use_mujoco           = LaunchConfiguration('use_mujoco').perform(context)
     load_gripper         = LaunchConfiguration('load_gripper').perform(context)
     load_mobile          = LaunchConfiguration('load_mobile').perform(context)
+    with_realsense       = LaunchConfiguration('with_realsense').perform(context)
     use_fake_hardware    = LaunchConfiguration('use_fake_hardware').perform(context)
     fake_sensor_commands = LaunchConfiguration('fake_sensor_commands').perform(context)
     namespace            = LaunchConfiguration('namespace').perform(context)
@@ -118,7 +119,7 @@ def _launch_setup(context, *args, **kwargs):
     #  controller_manager parameters 
     cm_params = [controllers_yaml, {'robot_description': robot_description}]
     if use_mujoco.lower() == 'true':
-        xacro_args = f' hand:={load_gripper} mobile:={load_mobile}'
+        xacro_args = f' hand:={load_gripper} mobile:={load_mobile} with_realsense:={with_realsense}'
         if not is_dual:
             xacro_args += f' side:={robot_sides[0]}'
         cm_params.extend([
@@ -381,6 +382,7 @@ def generate_launch_description():
         DeclareLaunchArgument('namespace',         default_value='',      description='Namespace for the robot'),
         DeclareLaunchArgument('load_gripper',      default_value='true',  description='Load gripper (true/false)'),
         DeclareLaunchArgument('load_mobile',       default_value='false', description='Load mobile base (true/false)'),
+        DeclareLaunchArgument('with_realsense',    default_value='true',  description='Attach RealSense D435i to each EE in the MuJoCo model (true/false)'),
         DeclareLaunchArgument('use_mujoco',        default_value='false', description='Use MuJoCo hardware interface'),
         DeclareLaunchArgument('use_fake_hardware', default_value='false', description='Use fake hardware'),
         DeclareLaunchArgument('fake_sensor_commands', default_value='false', description='Fake sensor commands'),

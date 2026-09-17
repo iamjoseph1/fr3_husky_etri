@@ -27,7 +27,8 @@ setup(
         "console_scripts": [
             "ppo_liftcube_policy_node = fr3_husky_nn_policy.ppo_liftcube_policy_node:main",
             "ppo_reach_policy_node = fr3_husky_nn_policy.ppo_reach_policy_node:main",
-            "fr3_sysid_probe_node = fr3_husky_nn_policy.fr3_sysid_probe_node:main",
+            "fr3_consistency_probe_node = fr3_husky_nn_policy.fr3_consistency_probe_node:main",
+            "fr3_sysid_node = fr3_husky_nn_policy.fr3_sysid_node:main",
             "reach_target_cli = fr3_husky_nn_policy.reach_target_cli:main",
             "export_ppo_actor = fr3_husky_nn_policy.export_ppo_actor:main",
         ],
