@@ -1,4 +1,5 @@
 import os
+import math
 import yaml
 import tempfile
 import xacro
@@ -55,6 +56,90 @@ def _normalize_robot_sides(robot_sides):
     return normalized
 
 
+def _positive_integer_launch_argument(context, name):
+    raw_value = LaunchConfiguration(name).perform(context)
+    try:
+        value = int(raw_value)
+    except ValueError as error:
+        raise RuntimeError(f"{name} must be a positive integer, got {raw_value!r}") from error
+    if value <= 0 or str(value) != raw_value.strip():
+        raise RuntimeError(f"{name} must be a positive integer, got {raw_value!r}")
+    return value
+
+
+def _nonnegative_float_launch_argument(context, name):
+    raw_value = LaunchConfiguration(name).perform(context)
+    try:
+        value = float(raw_value)
+    except ValueError as error:
+        raise RuntimeError(f"{name} must be a finite non-negative number") from error
+    if not math.isfinite(value) or value < 0.0:
+        raise RuntimeError(f"{name} must be a finite non-negative number")
+    return value
+
+
+def _controllers_yaml_with_rate(source_path, control_rate_hz):
+    """Create a per-launch controller config with one consistent update rate."""
+    with open(source_path, encoding='utf-8') as source:
+        config = yaml.safe_load(source)
+
+    nodes = config.get('/**', {})
+    controller_manager = nodes.get('controller_manager', {}).get('ros__parameters', {})
+    if 'update_rate' not in controller_manager:
+        raise RuntimeError(f"controller_manager.update_rate is missing from {source_path}")
+    controller_manager['update_rate'] = control_rate_hz
+
+    controller_names = (
+        'left_fr3_action_controller',
+        'right_fr3_action_controller',
+        'dual_fr3_action_controller',
+    )
+    for controller_name in controller_names:
+        parameters = nodes.get(controller_name, {}).get('ros__parameters', {})
+        if 'update_rate' not in parameters:
+            raise RuntimeError(f"{controller_name}.update_rate is missing from {source_path}")
+        parameters['update_rate'] = control_rate_hz
+
+    generated = tempfile.NamedTemporaryFile(
+        mode='w',
+        prefix='fr3_ros_controllers_',
+        suffix='.yaml',
+        encoding='utf-8',
+        delete=False,
+    )
+    with generated:
+        yaml.safe_dump(config, generated, sort_keys=False)
+    return generated.name
+
+
+def _mujoco_dynamics_yaml(source_path, damping, frictionloss):
+    """Create an FR3 dynamics YAML shared by both arms in the MuJoCo scene."""
+    with open(source_path, encoding='utf-8') as source:
+        config = yaml.safe_load(source)
+
+    for joint_index in range(1, 8):
+        joint_name = f'joint{joint_index}'
+        try:
+            dynamics = config[joint_name]['dynamic']
+        except (KeyError, TypeError) as error:
+            raise RuntimeError(
+                f"{joint_name}.dynamic is missing from {source_path}"
+            ) from error
+        dynamics['damping'] = damping
+        dynamics['friction'] = frictionloss
+
+    generated = tempfile.NamedTemporaryFile(
+        mode='w',
+        prefix='fr3_mujoco_dynamics_',
+        suffix='.yaml',
+        encoding='utf-8',
+        delete=False,
+    )
+    with generated:
+        yaml.safe_dump(config, generated, sort_keys=False)
+    return generated.name
+
+
 def _launch_setup(context, *args, **kwargs):
     robot_sides = _normalize_robot_sides(
         _parse_robot_side(LaunchConfiguration('robot_side').perform(context))
@@ -68,6 +153,10 @@ def _launch_setup(context, *args, **kwargs):
     namespace            = LaunchConfiguration('namespace').perform(context)
     launch_rviz          = LaunchConfiguration('launch_rviz').perform(context)
     launch_move_group    = LaunchConfiguration('launch_move_group').perform(context)
+    control_rate_hz      = _positive_integer_launch_argument(context, 'control_rate_hz')
+    mujoco_armature      = _nonnegative_float_launch_argument(context, 'mujoco_armature')
+    mujoco_damping       = _nonnegative_float_launch_argument(context, 'mujoco_damping')
+    mujoco_frictionloss  = _nonnegative_float_launch_argument(context, 'mujoco_frictionloss')
 
     if not robot_sides:
         raise RuntimeError("robot_side must be 'left', 'right', or 'dual'.")
@@ -81,6 +170,7 @@ def _launch_setup(context, *args, **kwargs):
 
     pkg_desc = get_package_share_directory('fr3_husky_description')
     pkg_ctrl = get_package_share_directory('fr3_husky_controller')
+    pkg_franka_desc = get_package_share_directory('franka_description')
 
     #  URDF + MJCF paths
     if is_dual:
@@ -105,7 +195,10 @@ def _launch_setup(context, *args, **kwargs):
     robot_description = xacro.process_file(urdf_path, mappings=xacro_mappings).toprettyxml(indent='  ')
 
     # Controllers YAML
-    controllers_yaml = os.path.join(pkg_ctrl, 'config', 'fr3_ros_controllers.yaml')
+    controllers_yaml_source = os.path.join(pkg_ctrl, 'config', 'fr3_ros_controllers.yaml')
+    controllers_yaml = _controllers_yaml_with_rate(
+        controllers_yaml_source, control_rate_hz
+    )
 
     #  Topic names
     joint_states_topic = 'dual_fr3/joint_states' if is_dual else f'{robot_sides[0]}_fr3/joint_states'
@@ -119,8 +212,23 @@ def _launch_setup(context, *args, **kwargs):
     #  controller_manager parameters 
     cm_params = [controllers_yaml, {'robot_description': robot_description}]
     if use_mujoco.lower() == 'true':
-        xacro_args = f' hand:={load_gripper} mobile:={load_mobile} with_realsense:={with_realsense}'
-        if not is_dual:
+        xacro_args = (
+            f' hand:={load_gripper} mobile:={load_mobile}'
+            f' with_realsense:={with_realsense}'
+        )
+        if is_dual:
+            dynamics_yaml = _mujoco_dynamics_yaml(
+                os.path.join(
+                    pkg_franka_desc, 'mjcf', 'robots', 'fr3', 'dynamics.yaml'
+                ),
+                mujoco_damping,
+                mujoco_frictionloss,
+            )
+            xacro_args += (
+                f' fr3_armature:={mujoco_armature}'
+                f' fr3_dynamics_path:={dynamics_yaml}'
+            )
+        else:
             xacro_args += f' side:={robot_sides[0]}'
         cm_params.extend([
             {'mujoco_scene_xacro_path': mjcf_path},
@@ -388,5 +496,9 @@ def generate_launch_description():
         DeclareLaunchArgument('fake_sensor_commands', default_value='false', description='Fake sensor commands'),
         DeclareLaunchArgument('launch_rviz',         default_value='true',  description='Launch RViz'),
         DeclareLaunchArgument('launch_move_group',   default_value='true', description='Launch move_group (needed for fr3_move_to_joint)'),
+        DeclareLaunchArgument('control_rate_hz',      default_value='1000', description='controller_manager and FR3 controller update rate (Hz)'),
+        DeclareLaunchArgument('mujoco_armature',      default_value='0.1', description='MuJoCo FR3 joint armature'),
+        DeclareLaunchArgument('mujoco_damping',       default_value='0.003', description='MuJoCo FR3 joint viscous damping'),
+        DeclareLaunchArgument('mujoco_frictionloss',  default_value='0.2', description='MuJoCo FR3 joint Coulomb friction loss'),
         OpaqueFunction(function=_launch_setup),
     ])

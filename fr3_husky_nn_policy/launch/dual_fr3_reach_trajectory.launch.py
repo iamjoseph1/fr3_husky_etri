@@ -25,6 +25,10 @@ def generate_launch_description():
             "load_gripper": "false",
             "launch_rviz": LaunchConfiguration("launch_rviz"),
             "launch_move_group": LaunchConfiguration("launch_move_group"),
+            "control_rate_hz": LaunchConfiguration("control_rate_hz"),
+            "mujoco_armature": LaunchConfiguration("mujoco_armature"),
+            "mujoco_damping": LaunchConfiguration("mujoco_damping"),
+            "mujoco_frictionloss": LaunchConfiguration("mujoco_frictionloss"),
         }.items(),
     )
 
@@ -44,6 +48,18 @@ def generate_launch_description():
                     LaunchConfiguration("reach_policy_step_action"), value_type=bool
                 ),
                 "log_task_name": LaunchConfiguration("log_task_name"),
+                "experiment_control_rate_hz": ParameterValue(
+                    LaunchConfiguration("control_rate_hz"), value_type=int
+                ),
+                "experiment_mujoco_armature": ParameterValue(
+                    LaunchConfiguration("mujoco_armature"), value_type=float
+                ),
+                "experiment_mujoco_damping": ParameterValue(
+                    LaunchConfiguration("mujoco_damping"), value_type=float
+                ),
+                "experiment_mujoco_frictionloss": ParameterValue(
+                    LaunchConfiguration("mujoco_frictionloss"), value_type=float
+                ),
             },
         ],
     )
@@ -56,6 +72,26 @@ def generate_launch_description():
             DeclareLaunchArgument("launch_move_group", default_value="false"),
             DeclareLaunchArgument("shadow_mode", default_value="true"),
             DeclareLaunchArgument("auto_start", default_value="false"),
+            DeclareLaunchArgument(
+                "control_rate_hz",
+                default_value="1000",
+                description="Low-level controller update rate; use 100 or 1000",
+            ),
+            DeclareLaunchArgument(
+                "mujoco_armature",
+                default_value="0.1",
+                description="Armature applied to every FR3 arm joint",
+            ),
+            DeclareLaunchArgument(
+                "mujoco_damping",
+                default_value="0.003",
+                description="Viscous damping applied to every FR3 arm joint",
+            ),
+            DeclareLaunchArgument(
+                "mujoco_frictionloss",
+                default_value="0.2",
+                description="Coulomb friction loss applied to every FR3 arm joint",
+            ),
             DeclareLaunchArgument(
                 "reach_policy_step_action",
                 default_value="false",
@@ -78,7 +114,7 @@ def generate_launch_description():
                     [
                         policy_share,
                         "trajectories",
-                        "reach_1khz_matched_nominal.csv",
+                        "reach_1khz_matched_nominal_100hz_matched_noise.csv",
                     ]
                 ),
             ),

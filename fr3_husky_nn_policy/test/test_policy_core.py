@@ -10,7 +10,10 @@ from fr3_husky_nn_policy.observation import (
     build_liftcube_observation,
     build_reach_observation,
 )
-from fr3_husky_nn_policy.reach_goal_sequence import load_reach_goal_sequence
+from fr3_husky_nn_policy.reach_goal_sequence import (
+    ReachGoalSequencePlayer,
+    load_reach_goal_sequence,
+)
 
 
 def test_load_reach_goal_sequence_uses_dual_fr3_lab_format(tmp_path):
@@ -31,6 +34,43 @@ def test_load_reach_goal_sequence_rejects_invalid_duration(tmp_path):
 
     with pytest.raises(ValueError, match="duration_s"):
         load_reach_goal_sequence(str(sequence_path))
+
+
+def test_reach_goal_sequence_player_uses_absolute_deadlines():
+    player = ReachGoalSequencePlayer(
+        [
+            {"label": "one", "position": [0.5, 0.0, 0.2], "duration_s": 1.0},
+            {"label": "two", "position": [0.4, 0.0, 0.2], "duration_s": 2.0},
+        ]
+    )
+
+    assert player.start(10_000_000_000)["label"] == "one"
+    goal, transitions = player.advance(11_500_000_000)
+    assert goal["label"] == "two"
+    assert transitions == 1
+    # The second deadline stays anchored at 11 s + 2 s, not 11.5 s + 2 s.
+    assert player.deadline_ns == 13_000_000_000
+
+    goal, transitions = player.advance(13_000_000_000)
+    assert goal is None
+    assert transitions == 1
+    assert player.completed
+
+
+def test_reach_goal_sequence_player_loops():
+    player = ReachGoalSequencePlayer(
+        [
+            {"label": "one", "position": [0.5, 0.0, 0.2], "duration_s": 1.0},
+            {"label": "two", "position": [0.4, 0.0, 0.2], "duration_s": 1.0},
+        ],
+        loop=True,
+    )
+
+    player.start(0)
+    goal, transitions = player.advance(2_000_000_000)
+    assert goal["label"] == "one"
+    assert transitions == 2
+    assert player.deadline_ns == 3_000_000_000
 
 
 def test_numpy_actor_elu(tmp_path):

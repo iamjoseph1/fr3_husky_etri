@@ -5,3 +5,5 @@
 /logs
 /fr3_husky_nn_policy/ablation_mujoco
 /fr3_husky_nn_policy/ablation_realworld
+/fr3_husky_nn_policy/fr3_husky_nn_policy/__pycache__
+/fr3_husky_nn_policy/test/__pycache__

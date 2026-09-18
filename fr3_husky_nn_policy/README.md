@@ -706,6 +706,43 @@ sample까지 기록합니다. logger는 정책 rollout과 동일한 `eef_traject
 trajectory 경로, SHA-256, row 수, 원본 duration, launch-time noise scale 및
 scaling 전후 raw-action noise RMS가 기록됩니다.
 
+#### Control rate / MuJoCo dynamics ablation
+
+같은 nominal action을 100/1000 Hz controller와 서로 다른 MuJoCo passive dynamics로
+비교할 수 있습니다. `control_rate_hz`는 controller manager와 FR3 controller의
+update rate를 함께 바꾸며, MuJoCo physics integration timestep은 비교 중에도
+`0.001 s`로 고정됩니다. 세 dynamics 값은 양쪽 팔의 14개 관절에 동일하게
+적용됩니다.
+
+~~~bash
+ros2 launch fr3_husky_nn_policy dual_fr3_reach_trajectory.launch.py \
+  trajectory_path:="$(ros2 pkg prefix fr3_husky_nn_policy)/share/fr3_husky_nn_policy/trajectories/reach_1khz_matched_nominal.csv" \
+  noise_scale:=0.0 shadow_mode:=false auto_start:=false \
+  control_rate_hz:=1000 \
+  mujoco_armature:=0.1 mujoco_damping:=0.003 mujoco_frictionloss:=0.2 \
+  log_task_name:=reach_nominal_hz1000_a0p1_d0p003_f0p2
+
+ros2 service call /ppo_reach_policy_node/start_policy std_srvs/srv/Trigger {}
+~~~
+
+launch를 종료하고 팔을 같은 ready pose로 되돌린 뒤 인자만 바꿔 다음 조건을
+반복합니다. 먼저 아래 8-run one-factor-at-a-time matrix를 권장합니다.
+
+| profile | `mujoco_armature` | `mujoco_damping` | `mujoco_frictionloss` |
+| --- | ---: | ---: | ---: |
+| matched | 0.1 | 0.003 | 0.2 |
+| no-armature | 0.0 | 0.003 | 0.2 |
+| no-damping | 0.1 | 0.0 | 0.2 |
+| no-friction | 0.1 | 0.003 | 0.0 |
+
+각 profile을 `control_rate_hz:=100`과 `control_rate_hz:=1000`에서 한 번씩
+실행합니다. 여러 값을 동시에 제거한 unmatched 조건도 필요하면
+`mujoco_armature:=0.0 mujoco_damping:=0.0 mujoco_frictionloss:=0.0`을 추가합니다.
+`metadata.json`의 `run_context`에는 실제 control rate와 세 dynamics 값이 함께
+기록되므로 directory 이름에만 의존하지 않고 결과 조건을 확인할 수 있습니다.
+비교 시에는 각 run의 EEF error plot과 `eef_trajectory.csv`뿐 아니라
+`policy_trace.csv`의 관절 속도·effort·action 진동도 함께 확인하세요.
+
 기록된 ablation run으로부터 모든 CSV를 다시 생성하려면 다음 명령을 사용합니다.
 
 ~~~bash

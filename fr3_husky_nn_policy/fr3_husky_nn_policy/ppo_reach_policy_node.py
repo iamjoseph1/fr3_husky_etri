@@ -26,6 +26,7 @@ from .observation import (
     build_reach_observation,
 )
 from .reach_logger import ReachRunLogger, rotate_vector
+from .reach_goal_sequence import ReachGoalSequencePlayer, load_reach_goal_sequence
 from .reach_trajectory import ReachActionTrajectory
 
 
@@ -73,11 +74,18 @@ class PPOReachPolicyNode(Node):
         self.declare_parameter("ready_tolerance_rad", 0.20)
         self.declare_parameter("shadow_mode", True)
         self.declare_parameter("auto_start", False)
+        self.declare_parameter("reach_goal_sequence", "")
+        self.declare_parameter("reach_goal_sequence_loop", False)
         self.declare_parameter("target_position", [0.50, 0.0, 0.20])
         self.declare_parameter("target_min", [0.40, -0.10, 0.10])
         self.declare_parameter("target_max", [0.60, 0.10, 0.35])
         self.declare_parameter("log_root", "")
         self.declare_parameter("log_task_name", "dual_fr3_reach")
+        # Optional launch-provided provenance for MuJoCo ablation runs.
+        self.declare_parameter("experiment_control_rate_hz", 0)
+        self.declare_parameter("experiment_mujoco_armature", -1.0)
+        self.declare_parameter("experiment_mujoco_damping", -1.0)
+        self.declare_parameter("experiment_mujoco_frictionloss", -1.0)
         self.declare_parameter("left_eef_frame", "left_fr3_link7")
         self.declare_parameter("right_eef_frame", "right_fr3_link7")
         self.declare_parameter("eef_offset_xyz", [0.0, 0.0, 0.132])
@@ -94,12 +102,54 @@ class PPOReachPolicyNode(Node):
         self.action_reference_mode = (
             "policy_step" if self.reach_policy_step_action else "physics_step"
         )
+        experiment_control_rate_hz = int(
+            self.get_parameter("experiment_control_rate_hz").value
+        )
+        experiment_dynamics = {
+            "mujoco_armature": float(
+                self.get_parameter("experiment_mujoco_armature").value
+            ),
+            "mujoco_damping": float(
+                self.get_parameter("experiment_mujoco_damping").value
+            ),
+            "mujoco_frictionloss": float(
+                self.get_parameter("experiment_mujoco_frictionloss").value
+            ),
+        }
+        self.experiment_context = {}
+        if experiment_control_rate_hz > 0:
+            self.experiment_context["control_rate_hz"] = experiment_control_rate_hz
+        self.experiment_context.update(
+            {name: value for name, value in experiment_dynamics.items() if value >= 0.0}
+        )
         configured_trajectory = str(self.get_parameter("trajectory_path").value).strip()
         self.trajectory = (
             ReachActionTrajectory.load(configured_trajectory)
             if configured_trajectory
             else None
         )
+        configured_goal_sequence = str(
+            self.get_parameter("reach_goal_sequence").value
+        ).strip()
+        goal_sequence = (
+            load_reach_goal_sequence(configured_goal_sequence)
+            if configured_goal_sequence
+            else None
+        )
+        if self.trajectory is not None and goal_sequence is not None:
+            raise ValueError(
+                "trajectory_path and reach_goal_sequence cannot be used together"
+            )
+        self.goal_sequence_path = configured_goal_sequence
+        self.goal_sequence_player = (
+            ReachGoalSequencePlayer(
+                goal_sequence,
+                loop=bool(self.get_parameter("reach_goal_sequence_loop").value),
+            )
+            if goal_sequence is not None
+            else None
+        )
+        self.goal_sequence_complete_requested = False
         self.trajectory_noise_scale = float(
             self.get_parameter("trajectory_noise_scale").value
         )
@@ -127,6 +177,16 @@ class PPOReachPolicyNode(Node):
         self.target_position = self._vector_parameter("target_position")
         self.target_min = self._vector_parameter("target_min")
         self.target_max = self._vector_parameter("target_max")
+        if self.goal_sequence_player is not None:
+            for index, goal in enumerate(self.goal_sequence_player.goals):
+                position = np.asarray(goal["position"], dtype=np.float64)
+                if not np.all(
+                    (position >= self.target_min) & (position <= self.target_max)
+                ):
+                    raise ValueError(
+                        f"goal sequence target {index} is outside the training "
+                        f"range: {position.tolist()}"
+                    )
         self.left_eef_frame = str(self.get_parameter("left_eef_frame").value)
         self.right_eef_frame = str(self.get_parameter("right_eef_frame").value)
         self.eef_offset_xyz = self._vector_parameter("eef_offset_xyz")
@@ -156,11 +216,22 @@ class PPOReachPolicyNode(Node):
             self._joint_state_callback,
             10,
         )
-        self.create_subscription(
-            PoseStamped,
-            self.get_parameter("target_pose_topic").value,
-            self._target_pose_callback,
-            10,
+        target_pose_topic = self.get_parameter("target_pose_topic").value
+        # A configured sequence exclusively owns the target. Do not subscribe
+        # in that mode, since sequence targets are published on the same topic
+        # for MuJoCo visualization and would otherwise loop back as external
+        # input to this node.
+        if self.goal_sequence_player is None:
+            self.create_subscription(
+                PoseStamped,
+                target_pose_topic,
+                self._target_pose_callback,
+                10,
+            )
+        self.target_publisher = (
+            self.create_publisher(PoseStamped, target_pose_topic, 10)
+            if self.goal_sequence_player is not None
+            else None
         )
         command_qos = QoSProfile(depth=1, reliability=ReliabilityPolicy.BEST_EFFORT)
         self.command_publisher = self.create_publisher(
@@ -197,6 +268,12 @@ class PPOReachPolicyNode(Node):
             f"Reach target in '{self.base_frame}': {self.target_position.tolist()}; "
             f"action reference={self.action_reference_mode}"
         )
+        if self.goal_sequence_player is not None:
+            self.get_logger().info(
+                f"Loaded Reach goal sequence {self.goal_sequence_path} "
+                f"({len(self.goal_sequence_player.goals)} goals, "
+                f"loop={self.goal_sequence_player.loop})"
+            )
 
     def _vector_parameter(self, name: str) -> np.ndarray:
         value = np.asarray(self.get_parameter(name).value, dtype=np.float64)
@@ -241,6 +318,11 @@ class PPOReachPolicyNode(Node):
         if self.trajectory is not None:
             self._log_status(
                 "Ignoring external target while trajectory replay owns the target"
+            )
+            return
+        if self.goal_sequence_player is not None:
+            self._log_status(
+                "Ignoring external target while goal sequence owns the target"
             )
             return
         if msg.header.frame_id != self.base_frame:
@@ -313,6 +395,9 @@ class PPOReachPolicyNode(Node):
         self.sequence = 0
         self.trajectory_index = 0
         self.trajectory_complete_requested = False
+        self.goal_sequence_complete_requested = False
+        if self.goal_sequence_player is not None:
+            self.goal_sequence_player.reset()
         if self.trajectory is not None:
             self.target_position = self.trajectory.target_centers[0].copy()
         goal = RunPolicyControl.Goal()
@@ -382,13 +467,25 @@ class PPOReachPolicyNode(Node):
     def _run_context(self) -> dict:
         if self.trajectory is None:
             assert self.actor is not None
-            return {
+            context = {
                 "command_source": "policy",
                 "model_path": str(self.actor.model_path),
                 "model_source_sha256": self.actor.source_sha256,
                 "action_reference_mode": self.action_reference_mode,
             }
-        return {
+            if self.goal_sequence_player is not None:
+                context.update(
+                    {
+                        "reach_goal_sequence": self.goal_sequence_path,
+                        "reach_goal_sequence_goals": len(
+                            self.goal_sequence_player.goals
+                        ),
+                        "reach_goal_sequence_loop": self.goal_sequence_player.loop,
+                    }
+                )
+            context.update(self.experiment_context)
+            return context
+        context = {
             "command_source": "trajectory",
             "action_reference_mode": self.action_reference_mode,
             "trajectory_path": str(self.trajectory.path),
@@ -404,6 +501,8 @@ class PPOReachPolicyNode(Node):
                 * np.sqrt(np.mean(self.trajectory.noise.astype(np.float64) ** 2))
             ),
         }
+        context.update(self.experiment_context)
+        return context
 
     def _record_eef_sample(self):
         if self.run_logger is None:
@@ -471,6 +570,9 @@ class PPOReachPolicyNode(Node):
             return
         self.goal_handle = goal_handle
         self.goal_active = True
+        if self.goal_sequence_player is not None:
+            goal = self.goal_sequence_player.start(time.monotonic_ns())
+            self._apply_goal_sequence_target(goal, initial=True)
         result_future = goal_handle.get_result_async()
         result_future.add_done_callback(self._result_callback)
         self.get_logger().info("dual-arm policy control goal accepted")
@@ -494,7 +596,10 @@ class PPOReachPolicyNode(Node):
             f"policy control finished: success={result.success}, "
             f"message='{result.message}', last_sequence={result.last_sequence}"
         )
-        if self.trajectory_complete_requested:
+        if (
+            self.trajectory_complete_requested
+            or self.goal_sequence_complete_requested
+        ):
             self.finalize_reach_log()
 
     def _stop_service(self, _request, response):
@@ -512,6 +617,56 @@ class PPOReachPolicyNode(Node):
         if self.goal_handle is not None:
             self.goal_handle.cancel_goal_async()
         self.goal_active = False
+
+    def _apply_goal_sequence_target(
+        self, goal: dict[str, object], *, initial: bool = False
+    ):
+        self.target_position = np.asarray(goal["position"], dtype=np.float64)
+        if self.target_publisher is not None:
+            message = PoseStamped()
+            message.header.stamp = self.get_clock().now().to_msg()
+            message.header.frame_id = self.base_frame
+            message.pose.position.x = float(self.target_position[0])
+            message.pose.position.y = float(self.target_position[1])
+            message.pose.position.z = float(self.target_position[2])
+            message.pose.orientation.w = 1.0
+            self.target_publisher.publish(message)
+        prefix = "Starting" if initial else "Advancing to"
+        self.get_logger().info(
+            f"{prefix} Reach goal {self.goal_sequence_player.index + 1}/"
+            f"{len(self.goal_sequence_player.goals)} "
+            f"'{goal['label']}': {self.target_position.tolist()} for "
+            f"{float(goal['duration_s']):.3f}s"
+        )
+
+    def _update_goal_sequence(self) -> bool:
+        if self.goal_sequence_player is None or not self.goal_active:
+            return True
+        goal, transitions = self.goal_sequence_player.advance(time.monotonic_ns())
+        if goal is None:
+            self._finish_goal_sequence()
+            return False
+        if transitions:
+            self._apply_goal_sequence_target(goal)
+            if transitions > 1:
+                self.get_logger().warn(
+                    f"Goal sequence timer skipped {transitions - 1} intermediate "
+                    "goal boundary/boundaries"
+                )
+        return True
+
+    def _finish_goal_sequence(self):
+        if self.goal_sequence_complete_requested:
+            return
+        self.goal_sequence_complete_requested = True
+        self.get_logger().info(
+            "Reach goal sequence completed; requesting controller stop"
+        )
+        if self.goal_handle is not None:
+            self.goal_handle.cancel_goal_async()
+        else:
+            self.goal_active = False
+            self.finalize_reach_log()
 
     def _policy_step(self):
         ready, message = self._inputs_ready(require_ready_pose=False)
@@ -544,6 +699,10 @@ class PPOReachPolicyNode(Node):
             self.target_position = self.trajectory.target_centers[
                 self.trajectory_index
             ].copy()
+
+        if not self._update_goal_sequence():
+            self._record_eef_sample()
+            return
 
         self._record_eef_sample()
 

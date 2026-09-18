@@ -63,6 +63,12 @@
 
     <xacro:arg name="control_mode" default="effort" />
 
+    <!-- Reach dynamics ablation parameters. The launch file generates the
+         dynamics YAML for all seven joints; physics timestep remains 1 ms. -->
+    <xacro:arg name="fr3_armature" default="0.1" />
+    <xacro:arg name="fr3_dynamics_path"
+               default="$(find franka_description)/mjcf/robots/fr3/dynamics.yaml" />
+
     <!-- The reach launch uses hand=false. In that configuration use the
          effective link7 inertia from Isaac's dual_fr3_plate_ee.usd. -->
     <xacro:property name="standard_fr3_inertials"
@@ -91,7 +97,7 @@
             joint_limits="${xacro.load_yaml('$(find franka_description)/mjcf/robots/fr3/joint_limits.yaml')}"
             kinematics="${xacro.load_yaml('$(find franka_description)/mjcf/robots/fr3/kinematics.yaml')}"
             inertials="${fr3_arm_inertials}"
-            dynamics="${xacro.load_yaml('$(find franka_description)/mjcf/robots/fr3/dynamics.yaml')}"
+            dynamics="${xacro.load_yaml('$(arg fr3_dynamics_path)')}"
             accelerometer_config="${xacro.load_yaml('$(find franka_description)/mjcf/robots/fr3/accelerometers.yaml')}"
             hand="$(arg hand)"
             ee_id="franka_hand"
@@ -151,7 +157,7 @@
     <!-- Default classes -->
     <default>
         <default class="$(arg arm_id)">
-            <joint armature="0.1" damping="1"/>
+            <joint armature="$(arg fr3_armature)" damping="1"/>
             <position inheritrange="1"/>
             <default class="visual">
                 <geom type="mesh" group="2" contype="0" conaffinity="0"/>
